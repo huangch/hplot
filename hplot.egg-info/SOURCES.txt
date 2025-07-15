@@ -1,0 +1,15 @@
+LICENSE
+README.md
+pyproject.toml
+setup.py
+hplot/__init__.py
+hplot/core.py
+hplot/plotting.py
+hplot/runners.py
+hplot/stats.py
+hplot.egg-info/PKG-INFO
+hplot.egg-info/SOURCES.txt
+hplot.egg-info/dependency_links.txt
+hplot.egg-info/requires.txt
+hplot.egg-info/top_level.txt
+test/test_stats.py

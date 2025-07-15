@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hplot"
+version = "0.1.0"
+description = "A spatial heterogeneity plot inspired by Kaplan-Meier for tumor edge analysis"
+authors = [
+  { name="Your Name", email="you@example.com" }
+]
+readme = "README.md"
+requires-python = ">=3.7"
+license = {text = "MIT"}
+dependencies = [
+  "matplotlib>=3.0",
+  "pandas>=1.0",
+  "scipy>=1.6",
+  "numpy>=1.18"
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/hplot"
