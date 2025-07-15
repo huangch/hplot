@@ -1,6 +1,6 @@
 # h-plot
 
-**H-Plot: A spatial heterogeneity plot for tissue-based distance layers (e.g., tumor regions)**
+**H-Plot: A spatial heterogeneity plot for tissue-based distance layers**
 
 `h-plot` is a Python package for visualizing spatial heterogeneity across concentric distance layers in tissue regions, particularly tumor borders. Inspired by Kaplan-Meier survival curves, the H-Plot tracks the distribution of a target cell type (e.g., lymphocytes) across spatial layers instead of time.
 
