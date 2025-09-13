@@ -7,7 +7,7 @@ class HPlot:
         self.df_ = None
         self.grouped_stats_ = {}
 
-    def fit(self, df, value_col, layer_col, region_col, group_col=None):
+    def fit(self, df, value_col, layer_col, region_col, group_col=None, distance_col=None, distance_unit=None, ci=0.95):
         # Drop rows with NA in required columns
         cols = [value_col, layer_col, region_col] + ([group_col] if group_col else [])
         df = df.dropna(subset=cols)
@@ -16,12 +16,14 @@ class HPlot:
         self.layer_col = layer_col
         self.region_col = region_col
         self.group_col = group_col
+        self.distance_col = distance_col
+        self.distance_unit = distance_unit
 
         if self.group_col:
             groups = df[group_col].unique()
             for group in groups:
                 df_sub = df[df[group_col] == group]
-                stats = compute_layer_stats(df_sub, value_col, layer_col, region_col)
+                stats = compute_layer_stats(df_sub, value_col, layer_col, region_col, distance_col, ci=ci)
                 self.grouped_stats_[group] = stats
         else:
             stats = compute_layer_stats(df, value_col, layer_col, region_col)
@@ -30,7 +32,7 @@ class HPlot:
     def plot(self, ci_show=True, ax=None):
         if not self.grouped_stats_:
             raise RuntimeError("Call fit() before plot().")
-        return plot_hplot(self.grouped_stats_, ci_show=ci_show, ax=ax)
+        return plot_hplot(self.grouped_stats_, distance_col=self.distance_col, distance_unit = self.distance_unit, ci_show=ci_show, ax=ax)
 
     def savefig(self, filename, **kwargs):
         ax = self.plot()

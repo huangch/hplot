@@ -7,7 +7,10 @@ def run_hplot_batch(
     layer_col="layer",
     region_col="region_id",
     group_col=None,
+    distance_col=None,
+    distance_unit=None,
     label_col=None,
+    ci=None,
     output_dir="hplots",
     file_prefix="hplot",
     ci_show=True,
@@ -31,7 +34,7 @@ def run_hplot_batch(
             sub_df = df[df[label_col] == group]
 
         h = HPlot()
-        h.fit(sub_df, value_col=value_col, layer_col=layer_col, region_col=region_col, group_col=group_col)
+        h.fit(sub_df, value_col=value_col, layer_col=layer_col, region_col=region_col, group_col=group_col, distance_col=distance_col, distance_unit=distance_unit, ci=ci)
         h.plot(ci_show=ci_show)
         filename = os.path.join(output_dir, f"{file_prefix}_{group}.{file_format}")
         h.savefig(filename, dpi=dpi)
