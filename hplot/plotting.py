@@ -19,8 +19,8 @@ def plot_hplot(grouped_stats, distance_unit=None, ci_show=True, ax=None):
     def distance_formattyer(val, pos):
         dst_list = []
         for label, df in grouped_stats.items():
-            if val in df['layer']:
-                dst_list.append(df[df['layer']==val, 'distance'].values[0])
+            # if val in df['layer']:
+            dst_list.append(df[df['layer']==val, 'distance'].mean())
         dst_mean = np.mean(dst_list)
         return f"{val:g}\n{dst_mean:.3f}" 
     
