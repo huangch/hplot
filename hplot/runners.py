@@ -9,8 +9,7 @@ def run_hplot_batch(
     group_col=None,
     distance_col=None,
     distance_unit=None,
-    label_col=None,
-    ci=None,
+    ci=0.95,
     output_dir="hplots",
     file_prefix="hplot",
     ci_show=True,
@@ -22,8 +21,8 @@ def run_hplot_batch(
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    if label_col and label_col in df.columns:
-        groups = df[label_col].unique()
+    if group_col and group_col in df.columns:
+        groups = df[group_col].unique()
     else:
         groups = ["all"]
 
@@ -31,7 +30,7 @@ def run_hplot_batch(
         if group == "all":
             sub_df = df
         else:
-            sub_df = df[df[label_col] == group]
+            sub_df = df[df[group_col] == group]
 
         h = HPlot()
         h.fit(sub_df, value_col=value_col, layer_col=layer_col, region_col=region_col, group_col=group_col, distance_col=distance_col, distance_unit=distance_unit, ci=ci)
