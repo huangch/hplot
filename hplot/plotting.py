@@ -26,7 +26,7 @@ def plot_hplot(grouped_stats, distance_unit=None, ci_show=True, ax=None):
 
         return f"{val:g}\n{dst_mean:.3f}" 
     
-    ax.set_xlabel(f"Distance to tumor boundary (cellular layer index/distance{' ('+distance_unit+')' if distance_unit else ''})")  
+    ax.set_xlabel(f"Distance to tumor boundary (Cellular layers / Euclidean distance{' ('+distance_unit+')' if distance_unit else ''})")  
     ax.set_ylabel("Proportion of lymphocytes")
     ax.set_title("Spatial Heterogeneity Profile (H-Plot)")
     ax.legend(title="Group")
