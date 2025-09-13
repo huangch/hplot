@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.ticker import MaxNLocator
+from matplotlib.ticker import MaxNLocator, FuncFormatter
 
 def plot_hplot(grouped_stats, distance_unit=None, ci_show=True, ax=None):
     if ax is None:
@@ -21,12 +21,11 @@ def plot_hplot(grouped_stats, distance_unit=None, ci_show=True, ax=None):
         for label, df in grouped_stats.items():
             if val in df['layer']:
                 dst_list.append(df[df['layer']==val, 'distance'].values[0])
-            
         dst_mean = np.mean(dst_list)
-
         return f"{val:g}\n{dst_mean:.3f}" 
     
-    ax.set_xlabel(f"Distance to tumor boundary (Cellular layers / Euclidean distance{' ('+distance_unit+')' if distance_unit else ''})")  
+    ax.xaxis.set_major_formatter(FuncFormatter(distance_formattyer))
+    ax.set_xlabel(f"Distance to tumor boundary\nCellular layers / Euclidean distance{' ('+distance_unit+')' if distance_unit else ''})")  
     ax.set_ylabel("Proportion of lymphocytes")
     ax.set_title("Spatial Heterogeneity Profile (H-Plot)")
     ax.legend(title="Group")
