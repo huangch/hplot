@@ -32,7 +32,7 @@ class HPlot:
     def plot(self, ci_show=True, ax=None):
         if not self.grouped_stats_:
             raise RuntimeError("Call fit() before plot().")
-        return plot_hplot(self.grouped_stats_, distance_col=self.distance_col, distance_unit = self.distance_unit, ci_show=ci_show, ax=ax)
+        return plot_hplot(self.grouped_stats_, distance_unit=self.distance_unit, ci_show=ci_show, ax=ax)
 
     def savefig(self, filename, **kwargs):
         ax = self.plot()
