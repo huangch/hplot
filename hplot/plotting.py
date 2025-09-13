@@ -13,7 +13,7 @@ def plot_hplot(grouped_stats, distance_col=None, distance_unit=None, ci_show=Tru
         if ci_show:
             ax.fill_between(x, df["ci_lower"], df["ci_upper"], alpha=0.3, step="post")
 
-    ax.set_xlabel(f"Distance from tumor boundary ({distance_unit if distance_unit else 'distance' if distance_col else 'layer index'})")  
+    ax.set_xlabel(f"Distance from tumor boundary ({distance_unit if distance_unit else 'Euclidean distance from border' if distance_col else 'layer index'})")  
     ax.set_ylabel("Proportion of target cell type")
     ax.set_title("Spatial Heterogeneity Profile (H-Plot)")
     ax.legend(title="Group")

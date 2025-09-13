@@ -7,14 +7,14 @@ class HPlot:
         self.df_ = None
         self.grouped_stats_ = {}
 
-    def fit(self, df, value_col, layer_col, region_col, group_col=None, distance_col=None, distance_unit=None, ci=0.95):
+    def fit(self, df, value_col, layer_col, case_col, group_col=None, distance_col=None, distance_unit=None, ci=0.95):
         # Drop rows with NA in required columns
-        cols = [value_col, layer_col, region_col] + ([group_col] if group_col else [])
+        cols = [value_col, layer_col, case_col] + ([group_col] if group_col else [])
         df = df.dropna(subset=cols)
         self.df_ = df.copy()
         self.value_col = value_col
         self.layer_col = layer_col
-        self.region_col = region_col
+        self.region_col = case_col
         self.group_col = group_col
         self.distance_col = distance_col
         self.distance_unit = distance_unit
@@ -23,10 +23,10 @@ class HPlot:
             groups = df[group_col].unique()
             for group in groups:
                 df_sub = df[df[group_col] == group]
-                stats = compute_layer_stats(df_sub, value_col, layer_col, region_col, distance_col, ci=ci)
+                stats = compute_layer_stats(df_sub, value_col, layer_col, case_col, distance_col, ci=ci)
                 self.grouped_stats_[group] = stats
         else:
-            stats = compute_layer_stats(df, value_col, layer_col, region_col)
+            stats = compute_layer_stats(df, value_col, layer_col, case_col)
             self.grouped_stats_["overall"] = stats
 
     def plot(self, ci_show=True, ax=None):

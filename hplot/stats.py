@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from scipy.stats import t, norm
 
-def compute_layer_stats(df, value_col, layer_col, region_col, distance_col, ci=0.95):
+def compute_layer_stats(df, value_col, layer_col, case_col, distance_col, ci=0.95):
     grouped = df.groupby(layer_col)
     summary = []
 
