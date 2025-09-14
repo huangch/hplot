@@ -25,7 +25,7 @@ def plot_hplot(grouped_stats, distance_unit=None, ci_show=True, ax=None):
     
     ax.xaxis.set_major_formatter(FuncFormatter(distance_formattyer))
     # ax.set_xlabel(f"Distance to tumor boundary\nCellular layers / Euclidean distance{' ('+distance_unit+')' if distance_unit else ''}")  
-    ax.set_xlabel(f"Layerwise cellular distance from tumor border\nPhysical distance {'('+distance_unit+') ' if distance_unit else ''}from tumor border")  
+    ax.set_xlabel(f"Layerwise cellular distance from tumor border\nPhysical distance{' ('+distance_unit+') ' if distance_unit else ' '}from tumor border")  
     ax.set_ylabel("Proportion of immune cells")
     ax.set_title("Tumor Spatial Heterogeneity Profile (H-Plot)")
     ax.legend(title="Group")
