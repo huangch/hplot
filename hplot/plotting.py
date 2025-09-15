@@ -7,7 +7,7 @@ def plot_hplot(grouped_stats, distance_unit=None, ci_show=True, ax=None):
         fig, ax = plt.subplots(figsize=(6, 4))
 
     for label, df in grouped_stats.items():
-        x = df['layer']
+        x = df['layer'].round().astype(np.int32)
         y = df["mean"]
         ax.plot(x, y, label=str(label), drawstyle="steps-post")
 
@@ -18,13 +18,20 @@ def plot_hplot(grouped_stats, distance_unit=None, ci_show=True, ax=None):
 
     def distance_formattyer(val, pos):
         dst_list = []
-        for label, df in grouped_stats.items():
-            dst_list.append(df.loc[df['layer'].astype(np.int32)==np.rint(val).astype(np.int32), 'distance'].mean())
-        dst_mean = np.mean(dst_list)
-        return f"{val:g}\n{dst_mean:.1f}"
+        for _, df in grouped_stats.items():
+            if int(round(val)) in df['layer'].to_list():
+                dst = df[df['layer']==int(round(val))]['distance'].mean()
+                dst_list.append(dst)
+
+        if len(dst_list) > 0:
+            dst_mean = np.mean(dst_list)
+            tick_label = f"{val:g}\n{dst_mean:.1f}"
+        else:
+            tick_label = f"{val:g}\n"
+
+        return tick_label
     
     ax.xaxis.set_major_formatter(FuncFormatter(distance_formattyer))
-    # ax.set_xlabel(f"Distance to tumor boundary\nCellular layers / Euclidean distance{' ('+distance_unit+')' if distance_unit else ''}")  
     ax.set_xlabel(f"Layerwise cellular distance from tumor border\nPhysical distance{' ('+distance_unit+') ' if distance_unit else ' '}from tumor border")  
     ax.set_ylabel("Proportion of immune cells")
     ax.set_title("Tumor Spatial Heterogeneity Profile (H-Plot)")
