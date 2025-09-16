@@ -25,7 +25,7 @@ class HPlot:
                 stats = compute_layer_stats(df_sub, value_col, layer_col, distance_col, ci=ci)
                 self.grouped_stats_[group] = stats
         else:
-            stats = compute_layer_stats(df, value_col, layer_col)
+            stats = compute_layer_stats(df, value_col, layer_col, distance_col, ci=ci)
             self.grouped_stats_["overall"] = stats
 
     def plot(self, ci_show=True, ax=None):
