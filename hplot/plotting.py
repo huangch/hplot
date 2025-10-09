@@ -34,7 +34,7 @@ def plot_hplot(grouped_stats, distance_unit=None, ci_show=True, ax=None, display
         return tick_label
 
     ax.xaxis.set_major_formatter(FuncFormatter(distance_formattyer))
-    ax.set_xlabel(f"Layerwise cellular distance from {display_base_type} border\nPhysical distance{' ('+distance_unit+') ' if distance_unit else ' '}from tumor border")  
+    ax.set_xlabel(f"Layerwise cellular distance from {display_base_type} border\nPhysical distance{' ('+distance_unit+') ' if distance_unit else ' '}from {display_base_type} border")  
     ax.set_ylabel(f"Proportion of {display_target_type}")
     ax.set_title("Tumor Spatial Heterogeneity Profile (H-Plot)")
     ax.legend(title="Group")
