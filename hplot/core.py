@@ -28,10 +28,10 @@ class HPlot:
             stats = compute_layer_stats(df, value_col, layer_col, distance_col, ci=ci)
             self.grouped_stats_["overall"] = stats
 
-    def plot(self, ci_show=True, ax=None):
+    def plot(self, ci_show=True, ax=None, display_base_type="tumor", display_target_type="immune cells"):
         if not self.grouped_stats_:
             raise RuntimeError("Call fit() before plot().")
-        return plot_hplot(self.grouped_stats_, distance_unit=self.distance_unit, ci_show=ci_show, ax=ax)
+        return plot_hplot(self.grouped_stats_, distance_unit=self.distance_unit, ci_show=ci_show, ax=ax, display_base_type=display_base_type, display_target_type=display_target_type)
 
     def savefig(self, filename, **kwargs):
         ax = self.plot()

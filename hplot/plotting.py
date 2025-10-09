@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import MaxNLocator, FuncFormatter
 
-def plot_hplot(grouped_stats, distance_unit=None, ci_show=True, ax=None):
+def plot_hplot(grouped_stats, distance_unit=None, ci_show=True, ax=None, display_base_type='tumor', display_target_type='immune cells'):
     if ax is None:
         fig, ax = plt.subplots(figsize=(6, 4))
 
@@ -34,8 +34,8 @@ def plot_hplot(grouped_stats, distance_unit=None, ci_show=True, ax=None):
         return tick_label
 
     ax.xaxis.set_major_formatter(FuncFormatter(distance_formattyer))
-    ax.set_xlabel(f"Layerwise cellular distance from tumor border\nPhysical distance{' ('+distance_unit+') ' if distance_unit else ' '}from tumor border")  
-    ax.set_ylabel("Proportion of immune cells")
+    ax.set_xlabel(f"Layerwise cellular distance from {display_base_type} border\nPhysical distance{' ('+distance_unit+') ' if distance_unit else ' '}from tumor border")  
+    ax.set_ylabel(f"Proportion of {display_target_type}")
     ax.set_title("Tumor Spatial Heterogeneity Profile (H-Plot)")
     ax.legend(title="Group")
     ax.grid(True, linestyle="--", alpha=0.5)
