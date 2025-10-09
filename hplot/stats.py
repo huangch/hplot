@@ -32,5 +32,17 @@ def compute_layer_stats(df, value_col, layer_col, distance_col, ci=0.95):
                 "ci_upper": ci_upper,
                 "n": n
             })
+        else:
+            distance = group[distance_col].mean() if distance_col else None
+            mean = np.mean(values)
+            
+            summary.append({
+                'layer': layer,
+                'distance': distance,
+                "mean": mean,
+                "ci_lower": mean,
+                "ci_upper": mean,
+                "n": n   
+            })        
 
     return pd.DataFrame(summary)
