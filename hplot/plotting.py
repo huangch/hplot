@@ -3,6 +3,8 @@ import numpy as np
 from matplotlib.ticker import MaxNLocator, FuncFormatter
 
 def plot_hplot(grouped_stats, distance_unit=None, ci_show=True, ax=None, display_base_type='tumor', display_target_type='immune cells'):
+    plt.rcdefaults()
+    
     if ax is None:
         fig, ax = plt.subplots(figsize=(6, 4))
 
