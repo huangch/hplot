@@ -16,10 +16,11 @@ setup(
         "scipy>=1.6",
         "numpy>=1.18"
     ],
+    license="Apache-2.0",
     classifiers=[
         "Programming Language :: Python :: 3",
         "Operating System :: OS Independent",
-        "License :: OSI Approved :: MIT License"
+        "License :: OSI Approved :: Apache Software License"
     ],
     python_requires='>=3.7',
     include_package_data=True,
