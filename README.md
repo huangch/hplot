@@ -12,48 +12,47 @@ pip install -e .
 
 ## 📁 Input Data Format (CSV)
 
-| region_id | layer | value  | tumor_type | subtype |
-|-----------|-------|--------|------------|---------|
-| R1        | -2    | 0.05   | lumA       | hot     |
-| R1        | -1    | 0.08   | lumA       | hot     |
-| R1        | 0     | 0.10   | lumA       | hot     |
-| ...       | ...   | ...    | ...        | ...     |
+| case_id | layer | value  | subtype |
+|---------|-------|--------|---------|
+| C1      | -2    | 0.05   | hot     |
+| C1      | -1    | 0.08   | hot     |
+| C1      | 0     | 0.10   | hot     |
+| ...     | ...   | ...    | ...     |
 
-- `region_id`: Unique ID per tumor region
+- `case_id`: Unique ID per tissue region or patient case (optional)
 - `layer`: Distance from the tumor boundary (0 = boundary, positive = inside, negative = outside)
 - `value`: Proportion of a specific cell type in that layer
-- `tumor_type`: Used to split plots (one plot per type)
-- `subtype`: Used to draw multiple lines within each plot
+- `subtype`: Used to draw multiple lines within each plot (optional)
 
 ## 🧭 CLI Usage
 
 ```bash
 python run_hplot.py \
-  --input mydata.csv \
-  --value_col value \
-  --layer_col layer \
-  --region_col region_id \
-  --label_col tumor_type \
-  --group_col subtype \
-  --ci \
-  --file_format svg
+  input.csv \
+  --value-col value \
+  --layer-col layer \
+  --case-col case_id \
+  --group-col subtype \
+  --file-format svg
 ```
+
+The CLI reads a CSV file, groups the data by `--case-col` (if provided), and writes one H-Plot per case into the output directory (`hplots` by default).
 
 ## 📘 Python API Example
 
 ```python
 from hplot.core import HPlot
 
-h = HPlot()
-h.fit(
+hplot = HPlot()
+hplot.fit(
     df,
     value_col="value",
     layer_col="layer",
-    region_col="region_id",
-    group_col="subtype"
+    group_col="subtype",
+    distance_col="distance",
+    distance_unit="µm",
 )
-h.plot(ci_show=True)
-h.savefig("hplot_lumA.svg")
+hplot.savefig("hplot_case.svg", format="svg")
 ```
 
 ## 🔍 Features

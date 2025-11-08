@@ -1,38 +1,79 @@
+"""Execution helpers for batch H-Plot generation."""
+
+from __future__ import annotations
+
 import os
+from typing import Optional
+
+import pandas as pd
+
 from .core import HPlot
 
+
 def run_hplot_batch(
-    df,
-    value_col="value",
-    layer_col="layer",
-    group_col=None,
-    distance_col=None,
-    distance_unit=None,
-    ci=0.95,
-    output_dir="hplots",
-    file_prefix="hplot",
-    ci_show=True,
-    file_format="svg",
-    dpi=300,
-):
+    df: pd.DataFrame,
+    *,
+    value_col: str = "value",
+    layer_col: str = "layer",
+    group_col: Optional[str] = None,
+    case_col: Optional[str] = None,
+    distance_col: Optional[str] = None,
+    distance_unit: Optional[str] = None,
+    ci: float = 0.95,
+    output_dir: str = "hplots",
+    file_prefix: str = "hplot",
+    ci_show: bool = True,
+    file_format: str = "svg",
+    dpi: int = 300,
+    display_base_type: str = "tumor",
+    display_target_type: str = "immune cells",
+) -> None:
+    """Generate H-Plots for each ``case_col`` value.
+
+    If ``case_col`` is ``None`` the entire dataframe is visualised in a single
+    plot. When provided, a separate file is written for each case.
     """
-    根據群組自動產出多張 H-Plot 圖檔（每個 group 一張）
-    """
+
+    if file_format not in {"svg", "pdf", "png"}:
+        raise ValueError("file_format must be one of 'svg', 'pdf' or 'png'")
+
     os.makedirs(output_dir, exist_ok=True)
 
-    if group_col and group_col in df.columns:
-        groups = df[group_col].unique()
+    if case_col and case_col in df.columns:
+        case_groups = sorted(df[case_col].dropna().unique())
     else:
-        groups = ["all"]
+        case_groups = [None]
 
-    for group in groups:
-        if group == "all":
-            sub_df = df
+    for case_value in case_groups:
+        if case_value is None:
+            subset = df
+            suffix = ""
         else:
-            sub_df = df[df[group_col] == group]
+            subset = df[df[case_col] == case_value]
+            if subset.empty:
+                continue
+            suffix = f"_{case_value}"
 
-        h = HPlot()
-        h.fit(sub_df, value_col=value_col, layer_col=layer_col, group_col=group_col, distance_col=distance_col, distance_unit=distance_unit, ci=ci)
-        h.plot(ci_show=ci_show)
-        filename = os.path.join(output_dir, f"{file_prefix}_{group}.{file_format}")
-        h.savefig(filename, dpi=dpi)
+        hplot = HPlot()
+        hplot.fit(
+            subset,
+            value_col=value_col,
+            layer_col=layer_col,
+            group_col=group_col,
+            distance_col=distance_col,
+            distance_unit=distance_unit,
+            ci=ci,
+        )
+
+        if not hplot.grouped_stats_:
+            continue
+
+        filename = os.path.join(output_dir, f"{file_prefix}{suffix}.{file_format}")
+        hplot.savefig(
+            filename,
+            ci_show=ci_show,
+            display_base_type=display_base_type,
+            display_target_type=display_target_type,
+            dpi=dpi,
+            format=file_format,
+        )

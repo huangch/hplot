@@ -1,65 +1,106 @@
-import json
-import click
+"""Command line interface for hplot."""
+
+from __future__ import annotations
+
 import argparse
+from typing import Sequence
+
 import pandas as pd
-from hplot.runners import run_hplot_batch
-@click.group(context_settings=dict(help_option_names=["-h", "--help"]))
-@click.version_option(package_name="hplot")
-def main():
-    """H-plot CLI: spatial heterogeneity analysis & plots."""
 
-@main.command()
-@click.argument("input_path", type=click.Path(exists=True, dir_okay=False, path_type=str))
-@click.option("--out", "-o", type=click.Path(dir_okay=False, path_type=str),
-              default="hplot.png", show_default=True, help="Output plot file.")
-@click.option("--layer-col", default="layer", show_default=True,
-              help="Column indicating region layers.")
-@click.option("--target-col", default="cell_type", show_default=True,
-              help="Column with the cell type/category to profile.")
-@click.option("--target", required=True,
-              help="Which cell type/category ratio to plot (e.g., 'lymphocyte').")
-# def plot(input_path, out, layer_col, target_col, target):
-#     """Generate an H-plot from a prepared CSV/Parquet."""
-#     import pandas as pd
-#     import matplotlib.pyplot as plt
-#     df = pd.read_csv(input_path) if input_path.endswith(".csv") else pd.read_parquet(input_path)
-#     if layer_col not in df or target_col not in df:
-#         raise click.ClickException(f"Missing required columns: {layer_col}, {target_col}")
-#     # toy example: compute ratio per layer
-#     total = df.groupby(layer_col).size().rename("n_total")
-#     hits = df[df[target_col] == target].groupby(layer_col).size().rename("n_target")
-#     res = (
-#         pd.concat([total, hits], axis=1)
-#         .fillna(0.0)
-#         .assign(ratio=lambda x: x["n_target"] / x["n_total"].where(x["n_total"] > 0, 1))
-#         .reset_index()
-#         .sort_values(layer_col)
-#     )
-#     plt.figure()
-#     plt.plot(res[layer_col], res["ratio"], marker="o")
-#     plt.xlabel(f"{layer_col} (distance layers)")
-#     plt.ylabel(f"Ratio of {target}")
-#     plt.title(f"H-plot: {target}")
-#     plt.tight_layout()
-#     plt.savefig(out)
-#     click.echo(f"[hplot] saved → {out}")
+from .runners import run_hplot_batch
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Generate H-Plot from spatial heterogeneity data.")
-    parser.add_argument("--input", required=True, help="Input CSV file path")
-    parser.add_argument("--value_col", default="value", help="Column name for the value (e.g. proportion)")
-    parser.add_argument("--layer_col", default="layer", help="Column name for the layer distance")
-    parser.add_argument("--group_col", default=None, help="Column name for group (e.g. subtype within region)")
-    parser.add_argument("--distance_col", default=None, help="Column name for distance (e.g. actual Euclidean distance from border rater than layer index)")
-    parser.add_argument("--distance_unit", default=None, help="distance unit, default: None")
-    parser.add_argument("--output_dir", default="hplots", help="Directory to save plots")
-    parser.add_argument("--file_prefix", default="hplot", help="Prefix for output file names")
-    parser.add_argument("--file_format", default="svg", choices=["svg", "pdf", "png"], help="Output image format")
-    parser.add_argument("--ci", action="store_true", help="Whether to show confidence intervals")
-    parser.add_argument("--dpi", type=int, default=300, help="DPI for output images")
+def build_parser() -> argparse.ArgumentParser:
+    """Create the argument parser shared by the CLI entry points."""
 
-    args = parser.parse_args()
+    parser = argparse.ArgumentParser(
+        description="Generate H-Plots from spatial heterogeneity data.",
+    )
+    parser.add_argument(
+        "input",
+        help="Input CSV file path containing at least the value and layer columns.",
+    )
+    parser.add_argument(
+        "--value-col",
+        default="value",
+        help="Column containing the value to average per layer.",
+    )
+    parser.add_argument(
+        "--layer-col",
+        default="layer",
+        help="Column containing the discrete layer indices.",
+    )
+    parser.add_argument(
+        "--group-col",
+        default=None,
+        help="Optional column that defines the curves to draw within each plot.",
+    )
+    parser.add_argument(
+        "--case-col",
+        default=None,
+        help="Optional column identifying independent cases; one file per case is produced.",
+    )
+    parser.add_argument(
+        "--distance-col",
+        default=None,
+        help="Optional column with the physical distance that corresponds to each layer.",
+    )
+    parser.add_argument(
+        "--distance-unit",
+        default=None,
+        help="Label for the physical distance unit when --distance-col is provided.",
+    )
+    parser.add_argument(
+        "--ci-level",
+        type=float,
+        default=0.95,
+        help="Confidence interval level used when shading the plot.",
+    )
+    parser.add_argument(
+        "--hide-ci",
+        action="store_true",
+        help="Disable confidence interval shading in the output figures.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="hplots",
+        help="Directory where the generated figures are written.",
+    )
+    parser.add_argument(
+        "--file-prefix",
+        default="hplot",
+        help="Prefix for the output filenames.",
+    )
+    parser.add_argument(
+        "--file-format",
+        default="svg",
+        choices=["svg", "pdf", "png"],
+        help="Image format for the exported figures.",
+    )
+    parser.add_argument(
+        "--dpi",
+        type=int,
+        default=300,
+        help="Resolution (dots per inch) when saving raster formats.",
+    )
+    parser.add_argument(
+        "--display-base-type",
+        default="tumor",
+        help="Label for the base tissue/region shown on the x-axis title.",
+    )
+    parser.add_argument(
+        "--display-target-type",
+        default="immune cells",
+        help="Label for the profiled cell type displayed on the y-axis title.",
+    )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    """Entry point for the console script."""
+
+    parser = build_parser()
+    args = parser.parse_args(argv)
 
     df = pd.read_csv(args.input)
 
@@ -68,12 +109,19 @@ def main():
         value_col=args.value_col,
         layer_col=args.layer_col,
         group_col=args.group_col,
+        case_col=args.case_col,
+        distance_col=args.distance_col,
+        distance_unit=args.distance_unit,
+        ci=args.ci_level,
         output_dir=args.output_dir,
         file_prefix=args.file_prefix,
-        ci_show=args.ci,
+        ci_show=not args.hide_ci,
         file_format=args.file_format,
-        dpi=args.dpi
+        dpi=args.dpi,
+        display_base_type=args.display_base_type,
+        display_target_type=args.display_target_type,
     )
 
-if __name__ == "__main__":
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry point
     main()
