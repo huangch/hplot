@@ -2,12 +2,12 @@ import pandas as pd
 import numpy as np
 from scipy.stats import t, norm
 
-def compute_layer_stats(df, value_col, layer_col, distance_col, ci=0.95):
+def compute_layer_stats(df, prop_col, layer_col, distance_col, ci=0.95):
     grouped = df.groupby(layer_col)
     summary = []
 
     for layer, group in grouped:
-        values = group[value_col].values
+        values = group[prop_col].values
         n = len(values)
 
         if n > 1:

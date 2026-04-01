@@ -3,9 +3,10 @@ from .core import HPlot
 
 def run_hplot_batch(
     df,
-    value_col="value",
+    target_prop_col="target_prop",
     layer_col="layer",
     group_col=None,
+    base_prop_col=None,
     distance_col=None,
     distance_unit=None,
     ci=0.95,
@@ -32,7 +33,7 @@ def run_hplot_batch(
             sub_df = df[df[group_col] == group]
 
         h = HPlot()
-        h.fit(sub_df, value_col=value_col, layer_col=layer_col, group_col=group_col, distance_col=distance_col, distance_unit=distance_unit, ci=ci)
+        h.fit(sub_df, target_prop_col=target_prop_col, layer_col=layer_col, group_col=group_col, base_prop_col=base_prop_col, distance_col=distance_col, distance_unit=distance_unit, ci=ci)
         h.plot(ci_show=ci_show)
         filename = os.path.join(output_dir, f"{file_prefix}_{group}.{file_format}")
         h.savefig(filename, dpi=dpi)

@@ -48,7 +48,8 @@ def main():
 def main():
     parser = argparse.ArgumentParser(description="Generate H-Plot from spatial heterogeneity data.")
     parser.add_argument("--input", required=True, help="Input CSV file path")
-    parser.add_argument("--value_col", default="value", help="Column name for the value (e.g. proportion)")
+    parser.add_argument("--target_prop_col", default="target_prop", help="Column name for the target cell proportion")
+    parser.add_argument("--base_prop_col", default=None, help="Column name for the base cell proportion (optional)")
     parser.add_argument("--layer_col", default="layer", help="Column name for the layer distance")
     parser.add_argument("--group_col", default=None, help="Column name for group (e.g. subtype within region)")
     parser.add_argument("--distance_col", default=None, help="Column name for distance (e.g. actual Euclidean distance from border rater than layer index)")
@@ -65,9 +66,12 @@ def main():
 
     run_hplot_batch(
         df=df,
-        value_col=args.value_col,
+        target_prop_col=args.target_prop_col,
         layer_col=args.layer_col,
         group_col=args.group_col,
+        base_prop_col=args.base_prop_col,
+        distance_col=args.distance_col,
+        distance_unit=args.distance_unit,
         output_dir=args.output_dir,
         file_prefix=args.file_prefix,
         ci_show=args.ci,

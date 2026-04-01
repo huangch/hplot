@@ -3,7 +3,8 @@ import numpy as np
 from matplotlib.ticker import MaxNLocator, FuncFormatter
 
 def plot_hplot(
-   grouped_stats,
+   target_grouped_stats,
+   base_grouped_stats=None,
    distance_unit=None,
    ci_show=True,
    ax=None,
@@ -19,7 +20,7 @@ def plot_hplot(
    Plot H-plot curves from precomputed grouped_stats.
    Parameters
    ----------
-   grouped_stats : dict[str, pd.DataFrame]
+   target_grouped_stats : dict[str, pd.DataFrame]
        Mapping from group label -> stats DataFrame.
        DataFrame must contain columns: 'layer', 'mean' and (if ci_show) 'ci_lower', 'ci_upper'.
        If distance tick labels are desired, DataFrame should contain column: 'distance'.
@@ -52,7 +53,7 @@ def plot_hplot(
    if ax is None:
        _, ax = plt.subplots(figsize=(6, 4))
    # Plot each group
-   for i, (label, df) in enumerate(grouped_stats.items()):
+   for i, (label, df) in enumerate(target_grouped_stats.items()):
        x = df["layer"].round().astype(np.int32).to_numpy()
        y = df["mean"].to_numpy()
        if color_map is not None:
@@ -82,6 +83,38 @@ def plot_hplot(
                alpha=0.25,
                step="post",
            )
+   # Plot base proportion lines if provided
+   if base_grouped_stats:
+       for i, (label, df) in enumerate(base_grouped_stats.items()):
+           x = df["layer"].round().astype(np.int32).to_numpy()
+           y = df["mean"].to_numpy()
+           if color_map is not None:
+               if label not in color_map:
+                   raise ValueError(f"Missing color for label '{label}' in color_map.")
+               color = color_map[label]
+           else:
+               color = palette[i % len(palette)]
+           ax.plot(
+               x,
+               y,
+               label=f"{label} (base)",
+               color=color,
+               drawstyle="steps-post",
+               linewidth=2,
+           )
+           if ci_show:
+               if ("ci_lower" not in df.columns) or ("ci_upper" not in df.columns):
+                   raise ValueError(
+                       f"ci_show=True but '{label}' base stats missing ci_lower/ci_upper columns."
+                   )
+               ax.fill_between(
+                   x,
+                   df["ci_lower"].to_numpy(),
+                   df["ci_upper"].to_numpy(),
+                   color=color,
+                   alpha=0.25,
+                   step="post",
+               )
    ax.ticklabel_format(axis="x", style="plain", useOffset=False)
    # Optional: show layer + mean distance per layer on x ticks
    def distance_formatter(value, _pos):
@@ -89,7 +122,7 @@ def plot_hplot(
 
         layer_index = int(round(value))
         distances = []
-        for stats_df in grouped_stats.values():
+        for stats_df in target_grouped_stats.values():
             if "distance" not in stats_df.columns:
                 continue
             mask = stats_df["layer"].round().astype(np.int32) == layer_index
