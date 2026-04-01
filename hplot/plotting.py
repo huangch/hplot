@@ -201,14 +201,14 @@ def plot_hplotx(grouped_stats, distance_unit=None, ci_show=True, ax=None, displa
         
         if len(dst_list) > 0:
             dst_mean = np.mean(dst_list)
-            tick_label = f"{val:g}\n{dst_mean:.1f}"
+            tick_label = f"{val:g}\n({dst_mean:.1f})"
         else:
             tick_label = f"{val:g}\n"
             
         return tick_label
 
     ax.xaxis.set_major_formatter(FuncFormatter(distance_formattyer))
-    ax.set_xlabel(f"Layerwise cellular distance from {display_base_type} border\nPhysical distance{' ('+distance_unit+') ' if distance_unit else ' '}from {display_base_type} border")  
+    ax.set_xlabel(f"Layerwise cellular distance from {display_base_type} border\n(Physical distance{' ('+distance_unit+') ' if distance_unit else ' '}from {display_base_type} border)")  
     ax.set_ylabel(f"Proportion of {display_target_type}")
     ax.set_title("Tumor Spatial Heterogeneity Profile (H-Plot)")
     ax.legend(title="Group")
