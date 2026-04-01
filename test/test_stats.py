@@ -21,7 +21,7 @@ class TestLayerStats(unittest.TestCase):
 
     def test_ci_large_sample(self):
         df_large = pd.concat([self.df] * 7, ignore_index=True)  # 35 samples
-        stats = compute_layer_stats(df_large, prop_col="value", layer_col="layer", distance_col=None)
+        stats = compute_layer_stats(df_large, prop="value", layer_col="layer", distance_col=None)
         self.assertIn("ci_lower", stats.columns)
         self.assertIn("ci_upper", stats.columns)
         self.assertEqual(len(stats), 1)
@@ -29,7 +29,7 @@ class TestLayerStats(unittest.TestCase):
         self.assertLess(stats["ci_lower"].iloc[0], stats["mean"].iloc[0])
 
     def test_ci_small_sample(self):
-        stats = compute_layer_stats(self.df, prop_col="value", layer_col="layer", distance_col=None)
+        stats = compute_layer_stats(self.df, prop="value", layer_col="layer", distance_col=None)
         self.assertIn("ci_lower", stats.columns)
         self.assertIn("ci_upper", stats.columns)
         self.assertEqual(len(stats), 1)
@@ -38,9 +38,9 @@ class TestLayerStats(unittest.TestCase):
 
     def test_requires_columns(self):
         with self.assertRaises((ValueError, KeyError)):
-            compute_layer_stats(self.df, prop_col="missing", layer_col="layer", distance_col=None)
+            compute_layer_stats(self.df, prop="missing", layer_col="layer", distance_col=None)
         with self.assertRaises((ValueError, KeyError)):
-            compute_layer_stats(self.df, prop_col="value", layer_col="missing", distance_col=None)
+            compute_layer_stats(self.df, prop="value", layer_col="missing", distance_col=None)
 
 
 if __name__ == "__main__":

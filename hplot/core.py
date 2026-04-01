@@ -8,13 +8,13 @@ class HPlot:
         self.target_grouped_stats_ = {}
         self.base_grouped_stats_ = {}
 
-    def fit(self, df, target_prop_col, layer_col, group_col=None, base_prop_col=None, distance_col=None, distance_unit=None, ci=0.95, color_map=None, palette=None, legend_order=None, legend_title=None, legend_kwargs=None):
+    def fit(self, df, target_prop, layer_col, group_col=None, base_prop=None, distance_col=None, distance_unit=None, ci=0.95, color_map=None, palette=None, legend_order=None, legend_title=None, legend_kwargs=None):
         # Drop rows with NA in required columns
-        cols = [target_prop_col, layer_col] + ([group_col] if group_col else [])
+        cols = [target_prop, layer_col] + ([group_col] if group_col else [])
         df = df.dropna(subset=cols)
         self.df_ = df.copy()
-        self.target_prop_col = target_prop_col
-        self.base_prop_col = base_prop_col
+        self.target_prop = target_prop
+        self.base_prop = base_prop
         self.layer_col = layer_col
         self.group_col = group_col
         self.distance_col = distance_col
@@ -29,15 +29,15 @@ class HPlot:
             groups = df[group_col].unique()
             for group in groups:
                 df_sub = df[df[group_col] == group]
-                stats = compute_layer_stats(df_sub, target_prop_col, layer_col, distance_col, ci=ci)
+                stats = compute_layer_stats(df_sub, target_prop, layer_col, distance_col, ci=ci)
                 self.target_grouped_stats_[group] = stats
-                if base_prop_col:
-                    self.base_grouped_stats_[group] = compute_layer_stats(df_sub, base_prop_col, layer_col, distance_col, ci=ci)
+                if base_prop:
+                    self.base_grouped_stats_[group] = compute_layer_stats(df_sub, base_prop, layer_col, distance_col, ci=ci)
         else:
-            stats = compute_layer_stats(df, target_prop_col, layer_col, distance_col, ci=ci)
+            stats = compute_layer_stats(df, target_prop, layer_col, distance_col, ci=ci)
             self.target_grouped_stats_["overall"] = stats
-            if base_prop_col:
-                self.base_grouped_stats_["overall"] = compute_layer_stats(df, base_prop_col, layer_col, distance_col, ci=ci)
+            if base_prop:
+                self.base_grouped_stats_["overall"] = compute_layer_stats(df, base_prop, layer_col, distance_col, ci=ci)
 
     def plot(self, ci_show=True, ax=None, display_base_type="tumor", display_target_type="immune cells"):
         if not self.target_grouped_stats_:

@@ -56,10 +56,10 @@ df = pd.read_csv("input.csv")
 hplot = HPlot()
 hplot.fit(
     df,
-    target_prop_col="target_prop",
+    target_prop="target_prop",
     layer_col="layer",
     group_col="subtype",        # draw one line per subtype
-    base_prop_col="base_prop",  # optional: overlay base cell proportion
+    base_prop="base_prop",      # optional: overlay base cell proportion
     distance_col="distance",    # optional: physical distances for tick labels
     distance_unit="µm",         # optional: unit shown in x-axis label
     ci=0.95,                    # confidence interval level (default 0.95)
@@ -88,10 +88,10 @@ plt.savefig("hplot.png", dpi=300)
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `df` | `pd.DataFrame` | — | Input data frame. |
-| `target_prop_col` | `str` | — | Column for the target cell proportion. |
+| `target_prop` | `str` | — | Column for the target cell proportion. |
 | `layer_col` | `str` | — | Column for the layer index. |
 | `group_col` | `str \| None` | `None` | Column to split into separate lines. |
-| `base_prop_col` | `str \| None` | `None` | Column for the base cell proportion (overlaid line). |
+| `base_prop` | `str \| None` | `None` | Column for the base cell proportion (overlaid line). |
 | `distance_col` | `str \| None` | `None` | Column for mean physical distance per layer. |
 | `distance_unit` | `str \| None` | `None` | Unit label shown on the x-axis (e.g. `"µm"`). |
 | `ci` | `float` | `0.95` | Confidence level. Uses t-distribution for n ≤ 30, z-distribution for n > 30. |
@@ -117,8 +117,8 @@ plt.savefig("hplot.png", dpi=300)
 ```bash
 python run_hplot.py \
   --input input.csv \
-  --target_prop_col target_prop \
-  --base_prop_col base_prop \
+  --target_prop target_prop \
+  --base_prop base_prop \
   --layer_col layer \
   --group_col subtype \
   --distance_col distance \
@@ -137,8 +137,8 @@ The CLI reads the CSV, groups by `--group_col` (if provided), and saves one H-Pl
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `--input` | *(required)* | Path to input CSV file. |
-| `--target_prop_col` | `target_prop` | Column for target cell proportion. |
-| `--base_prop_col` | `None` | Column for base cell proportion (optional). |
+| `--target_prop` | `target_prop` | Column for target cell proportion. |
+| `--base_prop` | `None` | Column for base cell proportion (optional). |
 | `--layer_col` | `layer` | Column for layer index. |
 | `--group_col` | `None` | Column to split into separate output files. |
 | `--distance_col` | `None` | Column for physical distance per layer. |
@@ -158,8 +158,8 @@ from hplot.runners import run_hplot_batch
 
 run_hplot_batch(
     df=df,
-    target_prop_col="target_prop",
-    base_prop_col="base_prop",       # optional
+    target_prop="target_prop",
+    base_prop="base_prop",           # optional
     layer_col="layer",
     group_col="subtype",
     distance_col="distance",

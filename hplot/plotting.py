@@ -115,46 +115,43 @@ def plot_hplot(
                    alpha=0.25,
                    step="post",
                )
-   ax.ticklabel_format(axis="x", style="plain", useOffset=False)
-   # Optional: show layer + mean distance per layer on x ticks
-   def distance_formatter(value, _pos):
-        """Formatter that appends the mean physical distance for a layer."""
-
-        layer_index = int(round(value))
-        distances = []
-        for stats_df in target_grouped_stats.values():
-            if "distance" not in stats_df.columns:
-                continue
-            mask = stats_df["layer"].round().astype(np.int32) == layer_index
-            if mask.any():
-                distances.append(stats_df.loc[mask, "distance"].dropna().mean())
-
-        if distances:
-            distance_value = float(np.mean(distances))
-            if np.isnan(distance_value):
-                return f"{layer_index:g}"
-            # if distance_unit:
-            #     return f"{layer_index:g}\n{distance_value:.1f} {distance_unit}"
-            return f"{layer_index:g}\n{distance_value:.1f}"
-        return f"{layer_index:g}"
-         
-   ax.xaxis.set_major_formatter(FuncFormatter(distance_formatter))
-   ax.set_xlabel(
-       "Layerwise cellular distance from"
-       f" {display_base_type} border"
-       + (
-           f"\nPhysical distance ({distance_unit}) from {display_base_type} border"
-           if distance_unit
-           else ""
-       )
-   )
-
-   ax.set_ylabel(f"Proportion of {display_target_type}")
-   ax.set_title(f"{display_base_type.capitalize()} Spatial Heterogeneity Profile (H-plot)")
    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-   ax.xaxis.set_major_formatter(FuncFormatter(distance_formatter))
+   ax.set_ylabel(f"Proportion of {display_target_type}")
+   ax.set_title(f"{display_base_type.capitalize()} Spatial Heterogeneity Profile (H-plot)", fontweight="bold")
    ax.grid(True, linestyle="--", alpha=0.5)
    ax.axvline(x=0, color="black", linestyle="--", linewidth=1.2, alpha=0.8)
+
+   # Build layer -> mean physical distance lookup from target stats
+   layer_to_dist = {}
+   for stats_df in target_grouped_stats.values():
+       if "distance" not in stats_df.columns:
+           continue
+       for _, row in stats_df.iterrows():
+           lyr = int(round(row["layer"]))
+           dist = row["distance"]
+           if dist is not None and not (isinstance(dist, float) and np.isnan(dist)):
+               layer_to_dist.setdefault(lyr, []).append(dist)
+   layer_to_dist = {lyr: float(np.mean(vals)) for lyr, vals in layer_to_dist.items()}
+
+   if layer_to_dist and distance_unit:
+       # Bottom axis (ax): relabel ticks with physical distance values
+       def phys_formatter(value, _pos):
+           lyr = int(round(value))
+           return f"{layer_to_dist[lyr]:.1f}" if lyr in layer_to_dist else ""
+       ax.xaxis.set_major_formatter(FuncFormatter(phys_formatter))
+       ax.set_xlabel(f"Physical distance from {display_base_type} border ({distance_unit})")
+
+       # Top axis (ax2 via twiny): cellular layer index ticks
+       ax2 = ax.twiny()
+       ax2.set_xlim(ax.get_xlim())
+       primary_ticks = [t for t in ax.get_xticks() if int(round(t)) in layer_to_dist]
+       ax2.set_xticks(primary_ticks)
+       ax2.set_xticklabels([f"{int(round(t))}" for t in primary_ticks])
+       ax2.set_xlabel(f"Cellular distance from {display_base_type} border (layers)")
+   else:
+       ax.ticklabel_format(axis="x", style="plain", useOffset=False)
+       ax.set_xlabel(f"Cellular distance from {display_base_type} border (layers)")
+
    # Legend ordering
    handles, labels = ax.get_legend_handles_labels()
    if legend_order is not None:
