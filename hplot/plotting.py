@@ -50,42 +50,12 @@ def plot_hplot(
    # default palette if neither specified
    if color_map is None and palette is None:
        palette = plt.cm.tab10.colors
-   if ax is None:
-       _, ax = plt.subplots(figsize=(6, 4))
-   # Plot each group
-   for i, (label, df) in enumerate(target_grouped_stats.items()):
-       x = df["layer"].round().astype(np.int32).to_numpy()
-       y = df["mean"].to_numpy()
-       if color_map is not None:
-           if label not in color_map:
-               raise ValueError(f"Missing color for label '{label}' in color_map.")
-           color = color_map[label]
-       else:
-           color = palette[i % len(palette)]
-       ax.plot(
-           x,
-           y,
-           label=str(label),
-           color=color,
-           drawstyle="steps-post",
-           linewidth=2,
-       )
-       if ci_show:
-           if ("ci_lower" not in df.columns) or ("ci_upper" not in df.columns):
-               raise ValueError(
-                   f"ci_show=True but '{label}' stats missing ci_lower/ci_upper columns."
-               )
-           ax.fill_between(
-               x,
-               df["ci_lower"].to_numpy(),
-               df["ci_upper"].to_numpy(),
-               color=color,
-               alpha=0.25,
-               step="post",
-           )
-   # Plot base proportion lines if provided
-   if base_grouped_stats:
-       for i, (label, df) in enumerate(base_grouped_stats.items()):
+
+   with plt.rc_context({"font.size": 9}):
+       if ax is None:
+           _, ax = plt.subplots(figsize=(6, 4))
+       # Plot each group
+       for i, (label, df) in enumerate(target_grouped_stats.items()):
            x = df["layer"].round().astype(np.int32).to_numpy()
            y = df["mean"].to_numpy()
            if color_map is not None:
@@ -97,7 +67,7 @@ def plot_hplot(
            ax.plot(
                x,
                y,
-               label=f"{label} (base)",
+               label=str(label),
                color=color,
                drawstyle="steps-post",
                linewidth=2,
@@ -105,7 +75,7 @@ def plot_hplot(
            if ci_show:
                if ("ci_lower" not in df.columns) or ("ci_upper" not in df.columns):
                    raise ValueError(
-                       f"ci_show=True but '{label}' base stats missing ci_lower/ci_upper columns."
+                       f"ci_show=True but '{label}' stats missing ci_lower/ci_upper columns."
                    )
                ax.fill_between(
                    x,
@@ -115,50 +85,84 @@ def plot_hplot(
                    alpha=0.25,
                    step="post",
                )
-   ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-   ax.set_ylabel(f"Proportion of {display_target_type}")
-   ax.set_title(f"{display_base_type.capitalize()} Spatial Heterogeneity Profile (H-plot)", fontweight="bold")
-   ax.grid(True, linestyle="--", alpha=0.5)
-   ax.axvline(x=0, color="black", linestyle="--", linewidth=1.2, alpha=0.8)
+       # Plot base proportion lines if provided
+       if base_grouped_stats:
+           for i, (label, df) in enumerate(base_grouped_stats.items()):
+               x = df["layer"].round().astype(np.int32).to_numpy()
+               y = df["mean"].to_numpy()
+               if color_map is not None:
+                   if label not in color_map:
+                       raise ValueError(f"Missing color for label '{label}' in color_map.")
+                   color = color_map[label]
+               else:
+                   color = palette[i % len(palette)]
+               ax.plot(
+                   x,
+                   y,
+                   label=f"{label} (base)",
+                   color=color,
+                   drawstyle="steps-post",
+                   linewidth=2,
+               )
+               if ci_show:
+                   if ("ci_lower" not in df.columns) or ("ci_upper" not in df.columns):
+                       raise ValueError(
+                           f"ci_show=True but '{label}' base stats missing ci_lower/ci_upper columns."
+                       )
+                   ax.fill_between(
+                       x,
+                       df["ci_lower"].to_numpy(),
+                       df["ci_upper"].to_numpy(),
+                       color=color,
+                       alpha=0.25,
+                       step="post",
+                   )
+       ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+       ax.set_ylabel(f"Proportion of {display_target_type}", fontsize=9)
+       ax.set_title(f"{display_base_type.capitalize()} Spatial Heterogeneity Profile (H-plot)", fontweight="bold", fontsize=9)
+       ax.tick_params(axis="both", labelsize=8)
+       ax.grid(True, linestyle="--", alpha=0.5)
+       ax.axvline(x=0, color="black", linestyle="--", linewidth=1.2, alpha=0.8)
 
-   # Build layer -> mean physical distance lookup from target stats
-   layer_to_dist = {}
-   for stats_df in target_grouped_stats.values():
-       if "distance" not in stats_df.columns:
-           continue
-       for _, row in stats_df.iterrows():
-           lyr = int(round(row["layer"]))
-           dist = row["distance"]
-           if dist is not None and not (isinstance(dist, float) and np.isnan(dist)):
-               layer_to_dist.setdefault(lyr, []).append(dist)
-   layer_to_dist = {lyr: float(np.mean(vals)) for lyr, vals in layer_to_dist.items()}
+       # Build layer -> mean physical distance lookup from target stats
+       layer_to_dist = {}
+       for stats_df in target_grouped_stats.values():
+           if "distance" not in stats_df.columns:
+               continue
+           for _, row in stats_df.iterrows():
+               lyr = int(round(row["layer"]))
+               dist = row["distance"]
+               if dist is not None and not (isinstance(dist, float) and np.isnan(dist)):
+                   layer_to_dist.setdefault(lyr, []).append(dist)
+       layer_to_dist = {lyr: float(np.mean(vals)) for lyr, vals in layer_to_dist.items()}
 
-   if layer_to_dist and distance_unit:
-       # Bottom axis (ax): relabel ticks with physical distance values
-       def phys_formatter(value, _pos):
-           lyr = int(round(value))
-           return f"{layer_to_dist[lyr]:.1f}" if lyr in layer_to_dist else ""
-       ax.xaxis.set_major_formatter(FuncFormatter(phys_formatter))
-       ax.set_xlabel(f"Physical distance from {display_base_type} border ({distance_unit})")
+       if layer_to_dist and distance_unit:
+           # Bottom axis (ax): relabel ticks with physical distance values
+           def phys_formatter(value, _pos):
+               lyr = int(round(value))
+               return f"{layer_to_dist[lyr]:.1f}" if lyr in layer_to_dist else ""
+           ax.xaxis.set_major_formatter(FuncFormatter(phys_formatter))
+           ax.set_xlabel(f"Physical distance from {display_base_type} border ({distance_unit})", fontsize=9)
 
-       # Top axis (ax2 via twiny): cellular layer index ticks
-       ax2 = ax.twiny()
-       ax2.set_xlim(ax.get_xlim())
-       primary_ticks = [t for t in ax.get_xticks() if int(round(t)) in layer_to_dist]
-       ax2.set_xticks(primary_ticks)
-       ax2.set_xticklabels([f"{int(round(t))}" for t in primary_ticks])
-       ax2.set_xlabel(f"Cellular distance from {display_base_type} border (layers)")
-   else:
-       ax.ticklabel_format(axis="x", style="plain", useOffset=False)
-       ax.set_xlabel(f"Cellular distance from {display_base_type} border (layers)")
+           # Top axis (ax2 via twiny): cellular layer index ticks
+           ax2 = ax.twiny()
+           ax2.set_xlim(ax.get_xlim())
+           primary_ticks = [t for t in ax.get_xticks() if int(round(t)) in layer_to_dist]
+           ax2.set_xticks(primary_ticks)
+           ax2.set_xticklabels([f"{int(round(t))}" for t in primary_ticks], fontsize=8)
+           ax2.set_xlabel(f"Cellular distance from {display_base_type} border (layers)", fontsize=9)
+           ax2.tick_params(axis="x", labelsize=8)
+       else:
+           ax.ticklabel_format(axis="x", style="plain", useOffset=False)
+           ax.set_xlabel(f"Cellular distance from {display_base_type} border (layers)", fontsize=9)
 
-   # Legend ordering
-   handles, labels = ax.get_legend_handles_labels()
-   if legend_order is not None:
-       idx = [labels.index(l) for l in legend_order if l in labels]
-       handles = [handles[i] for i in idx]
-       labels = [labels[i] for i in idx]
-   ax.legend(handles, labels, title=legend_title, **legend_kwargs)
+       # Legend ordering
+       handles, labels = ax.get_legend_handles_labels()
+       if legend_order is not None:
+           idx = [labels.index(l) for l in legend_order if l in labels]
+           handles = [handles[i] for i in idx]
+           labels = [labels[i] for i in idx]
+       ax.legend(handles, labels, title=legend_title, fontsize=8, title_fontsize=8, **legend_kwargs)
    return ax
     
 def plot_hplotx(grouped_stats, distance_unit=None, ci_show=True, ax=None, display_base_type='tumor', display_target_type='immune cells', color_map=None, palette=None, legend_order=None, legend_title="Group", legend_kwargs=None,):
