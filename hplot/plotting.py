@@ -51,9 +51,9 @@ def plot_hplot(
    if color_map is None and palette is None:
        palette = plt.cm.tab10.colors
 
-   with plt.rc_context({"font.size": 9}):
-       if ax is None:
-           _, ax = plt.subplots(figsize=(6, 4))
+   if ax is None:
+       _, ax = plt.subplots(figsize=plt.rcParams.get("figure.figsize", (6, 4)))
+   if True:
        # Plot each group
        for i, (label, df) in enumerate(target_grouped_stats.items()):
            x = df["layer"].round().astype(np.int32).to_numpy()
@@ -70,7 +70,7 @@ def plot_hplot(
                label=str(label),
                color=color,
                drawstyle="steps-post",
-               linewidth=2,
+               linewidth=3,
            )
            if ci_show:
                if ("ci_lower" not in df.columns) or ("ci_upper" not in df.columns):
@@ -82,7 +82,7 @@ def plot_hplot(
                    df["ci_lower"].to_numpy(),
                    df["ci_upper"].to_numpy(),
                    color=color,
-                   alpha=0.25,
+                   alpha=0.12,
                    step="post",
                )
        # Plot base proportion lines if provided
@@ -102,7 +102,7 @@ def plot_hplot(
                    label=f"{label} (base)",
                    color=color,
                    drawstyle="steps-post",
-                   linewidth=2,
+                   linewidth=3,
                )
                if ci_show:
                    if ("ci_lower" not in df.columns) or ("ci_upper" not in df.columns):
@@ -114,13 +114,13 @@ def plot_hplot(
                        df["ci_lower"].to_numpy(),
                        df["ci_upper"].to_numpy(),
                        color=color,
-                       alpha=0.25,
+                       alpha=0.12,
                        step="post",
                    )
        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-       ax.set_ylabel(f"Proportion of {display_target_type}", fontsize=9)
-       ax.set_title(f"{display_base_type.capitalize()} Spatial Heterogeneity Profile (H-plot)", fontweight="bold", fontsize=9)
-       ax.tick_params(axis="both", labelsize=8)
+       ax.set_ylabel(f"Proportion of {display_target_type}")
+       ax.set_title(f"{display_base_type.capitalize()} Spatial Heterogeneity Profile (H-plot)", fontweight="bold")
+       ax.tick_params(axis="both")
        ax.grid(True, linestyle="--", alpha=0.5)
        ax.axvline(x=0, color="black", linestyle="--", linewidth=1.2, alpha=0.8)
 
@@ -142,19 +142,19 @@ def plot_hplot(
                lyr = int(round(value))
                return f"{layer_to_dist[lyr]:.1f}" if lyr in layer_to_dist else ""
            ax.xaxis.set_major_formatter(FuncFormatter(phys_formatter))
-           ax.set_xlabel(f"Physical distance from {display_base_type} border ({distance_unit})", fontsize=9)
+           ax.set_xlabel(f"Physical distance from {display_base_type} border ({distance_unit})")
 
            # Top axis (ax2 via twiny): cellular layer index ticks
            ax2 = ax.twiny()
            ax2.set_xlim(ax.get_xlim())
            primary_ticks = [t for t in ax.get_xticks() if int(round(t)) in layer_to_dist]
            ax2.set_xticks(primary_ticks)
-           ax2.set_xticklabels([f"{int(round(t))}" for t in primary_ticks], fontsize=8)
-           ax2.set_xlabel(f"Cellular distance from {display_base_type} border (layers)", fontsize=9)
-           ax2.tick_params(axis="x", labelsize=8)
+           ax2.set_xticklabels([f"{int(round(t))}" for t in primary_ticks])
+           ax2.set_xlabel(f"Cellular distance from {display_base_type} border (layers)")
+           ax2.tick_params(axis="x")
        else:
            ax.ticklabel_format(axis="x", style="plain", useOffset=False)
-           ax.set_xlabel(f"Cellular distance from {display_base_type} border (layers)", fontsize=9)
+           ax.set_xlabel(f"Cellular distance from {display_base_type} border (layers)")
 
        # Legend ordering
        handles, labels = ax.get_legend_handles_labels()
@@ -162,7 +162,7 @@ def plot_hplot(
            idx = [labels.index(l) for l in legend_order if l in labels]
            handles = [handles[i] for i in idx]
            labels = [labels[i] for i in idx]
-       ax.legend(handles, labels, title=legend_title, fontsize=8, title_fontsize=8, **legend_kwargs)
+       ax.legend(handles, labels, title=legend_title, **legend_kwargs)
    return ax
     
 def plot_hplotx(grouped_stats, distance_unit=None, ci_show=True, ax=None, display_base_type='tumor', display_target_type='immune cells', color_map=None, palette=None, legend_order=None, legend_title="Group", legend_kwargs=None,):
