@@ -56,13 +56,12 @@ df = pd.read_csv("input.csv")
 hplot = HPlot()
 hplot.fit(
     df,
-    target_prop="target_prop",
-    layer_col="layer",
-    group_col="subtype",        # draw one line per subtype
-    base_prop="base_prop",      # optional: overlay base cell proportion
-    distance_col="distance",    # optional: physical distances for tick labels
-    distance_unit="µm",         # optional: unit shown in x-axis label
-    ci=0.95,                    # confidence interval level (default 0.95)
+    keys=["target_prop", "base_prop"],  # one line per column; use a string for a single key
+    layer="layer",
+    group="subtype",          # optional: draw one line per group value
+    distance="distance",      # optional: physical distances for tick labels
+    unit="µm",                # optional: unit shown on x-axis
+    ci=0.95,                  # confidence interval level (default 0.95)
 )
 hplot.savefig("hplot_case.svg", format="svg")
 ```
@@ -88,12 +87,11 @@ plt.savefig("hplot.png", dpi=300)
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `df` | `pd.DataFrame` | — | Input data frame. |
-| `target_prop` | `str` | — | Column for the target cell proportion. |
-| `layer_col` | `str` | — | Column for the layer index. |
-| `group_col` | `str \| None` | `None` | Column to split into separate lines. |
-| `base_prop` | `str \| None` | `None` | Column for the base cell proportion (overlaid line). |
-| `distance_col` | `str \| None` | `None` | Column for mean physical distance per layer. |
-| `distance_unit` | `str \| None` | `None` | Unit label shown on the x-axis (e.g. `"µm"`). |
+| `keys` | `str \| list[str]` | — | Column name(s) for cell proportions. Each column becomes a separate line on the plot. |
+| `layer` | `str` | — | Column for the layer index. |
+| `group` | `str \| None` | `None` | Column to split into separate lines (e.g. tumor subtype). |
+| `distance` | `str \| None` | `None` | Column for mean physical distance per layer. |
+| `unit` | `str \| None` | `None` | Unit label shown on the x-axis (e.g. `"µm"`). |
 | `ci` | `float` | `0.95` | Confidence level. Uses t-distribution for n ≤ 30, z-distribution for n > 30. |
 | `color_map` | `dict \| None` | `None` | Explicit `{label: color}` mapping. Overrides `palette`. |
 | `palette` | `sequence \| None` | `None` | Color sequence. Defaults to `plt.cm.tab10`. |
@@ -117,37 +115,35 @@ plt.savefig("hplot.png", dpi=300)
 ```bash
 python run_hplot.py \
   --input input.csv \
-  --target_prop target_prop \
-  --base_prop base_prop \
-  --layer_col layer \
-  --group_col subtype \
-  --distance_col distance \
-  --distance_unit µm \
-  --output_dir hplots \
-  --file_prefix case \
-  --file_format svg \
+  --keys target_prop base_prop \
+  --layer layer \
+  --group subtype \
+  --distance distance \
+  --unit µm \
+  --output hplots \
+  --prefix case \
+  --format svg \
   --dpi 300 \
   --ci
 ```
 
-The CLI reads the CSV, groups by `--group_col` (if provided), and saves one H-Plot file per group into `--output_dir`.
+The CLI reads the CSV, groups by `--group` (if provided), and saves one H-Plot file per group into `--output`.
 
 ### CLI arguments
 
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--input` | *(required)* | Path to input CSV file. |
-| `--target_prop` | `target_prop` | Column for target cell proportion. |
-| `--base_prop` | `None` | Column for base cell proportion (optional). |
-| `--layer_col` | `layer` | Column for layer index. |
-| `--group_col` | `None` | Column to split into separate output files. |
-| `--distance_col` | `None` | Column for physical distance per layer. |
-| `--distance_unit` | `None` | Physical distance unit label (e.g. `µm`). |
-| `--output_dir` | `hplots` | Directory for output files. |
-| `--file_prefix` | `hplot` | Prefix for output filenames. |
-| `--file_format` | `svg` | Output format: `svg`, `pdf`, or `png`. |
-| `--dpi` | `300` | DPI for raster output (PNG). |
-| `--ci` | flag | Show confidence interval bands. |
+| Argument | Short | Default | Description |
+|----------|-------|---------|-------------|
+| `--input` | `-i` | *(required)* | Path to input CSV file. |
+| `--keys` | | `target_prop` | One or more column names for cell proportions (each becomes a separate line). |
+| `--layer` | | `layer` | Column for the layer index. |
+| `--group` | | `None` | Column to split into separate output files. |
+| `--distance` | | `None` | Column for physical distance per layer. |
+| `--unit` | `-u` | `None` | Physical distance unit label (e.g. `µm`). |
+| `--output` | `-o` | `hplots` | Directory for output files. |
+| `--prefix` | `-p` | `hplot` | Prefix for output filenames. |
+| `--format` | `-f` | `svg` | Output format: `svg`, `pdf`, or `png`. |
+| `--dpi` | | `300` | DPI for raster output (PNG). |
+| `--ci` | | flag | Show confidence interval bands. |
 
 ---
 
@@ -158,17 +154,16 @@ from hplot.runners import run_hplot_batch
 
 run_hplot_batch(
     df=df,
-    target_prop="target_prop",
-    base_prop="base_prop",           # optional
-    layer_col="layer",
-    group_col="subtype",
-    distance_col="distance",
-    distance_unit="µm",
+    keys=["target_prop", "base_prop"],  # one or more column names
+    layer="layer",
+    group="subtype",          # optional
+    distance="distance",      # optional
+    unit="µm",                # optional
     ci=0.95,
-    output_dir="hplots",
-    file_prefix="case",
+    output="hplots",
+    prefix="case",
     ci_show=True,
-    file_format="svg",
+    format="svg",
     dpi=300,
 )
 ```
