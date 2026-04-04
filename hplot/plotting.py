@@ -4,8 +4,7 @@ from matplotlib.ticker import MaxNLocator, FuncFormatter
 
 def plot_hplot(
    target_grouped_stats,
-   base_grouped_stats=None,
-   distance_unit=None,
+   unit=None,
    ci_show=True,
    ax=None,
    display_base_type="tumor",
@@ -24,7 +23,7 @@ def plot_hplot(
        Mapping from group label -> stats DataFrame.
        DataFrame must contain columns: 'layer', 'mean' and (if ci_show) 'ci_lower', 'ci_upper'.
        If distance tick labels are desired, DataFrame should contain column: 'distance'.
-   distance_unit : str | None
+   unit : str | None
        Unit string shown on x tick second line (optional).
    ci_show : bool
        Whether to draw confidence interval bands using fill_between.
@@ -70,7 +69,7 @@ def plot_hplot(
                label=str(label),
                color=color,
                drawstyle="steps-post",
-               linewidth=3,
+               linewidth=2,
            )
            if ci_show:
                if ("ci_lower" not in df.columns) or ("ci_upper" not in df.columns):
@@ -82,41 +81,9 @@ def plot_hplot(
                    df["ci_lower"].to_numpy(),
                    df["ci_upper"].to_numpy(),
                    color=color,
-                   alpha=0.12,
+                   alpha=0.25,
                    step="post",
                )
-       # Plot base proportion lines if provided
-       if base_grouped_stats:
-           for i, (label, df) in enumerate(base_grouped_stats.items()):
-               x = df["layer"].round().astype(np.int32).to_numpy()
-               y = df["mean"].to_numpy()
-               if color_map is not None:
-                   if label not in color_map:
-                       raise ValueError(f"Missing color for label '{label}' in color_map.")
-                   color = color_map[label]
-               else:
-                   color = palette[i % len(palette)]
-               ax.plot(
-                   x,
-                   y,
-                   label=f"{label} (base)",
-                   color=color,
-                   drawstyle="steps-post",
-                   linewidth=3,
-               )
-               if ci_show:
-                   if ("ci_lower" not in df.columns) or ("ci_upper" not in df.columns):
-                       raise ValueError(
-                           f"ci_show=True but '{label}' base stats missing ci_lower/ci_upper columns."
-                       )
-                   ax.fill_between(
-                       x,
-                       df["ci_lower"].to_numpy(),
-                       df["ci_upper"].to_numpy(),
-                       color=color,
-                       alpha=0.12,
-                       step="post",
-                   )
        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
        ax.set_ylabel(f"Proportion of {display_target_type}")
        ax.set_title(f"{display_base_type.capitalize()} Spatial Heterogeneity Profile (H-plot)", fontweight="bold")
@@ -136,13 +103,13 @@ def plot_hplot(
                    layer_to_dist.setdefault(lyr, []).append(dist)
        layer_to_dist = {lyr: float(np.mean(vals)) for lyr, vals in layer_to_dist.items()}
 
-       if layer_to_dist and distance_unit:
+       if layer_to_dist and unit:
            # Bottom axis (ax): relabel ticks with physical distance values
            def phys_formatter(value, _pos):
                lyr = int(round(value))
                return f"{layer_to_dist[lyr]:.1f}" if lyr in layer_to_dist else ""
            ax.xaxis.set_major_formatter(FuncFormatter(phys_formatter))
-           ax.set_xlabel(f"Physical distance from {display_base_type} border ({distance_unit})")
+           ax.set_xlabel(f"Physical distance from {display_base_type} border ({unit})")
 
            # Top axis (ax2 via twiny): cellular layer index ticks
            ax2 = ax.twiny()
@@ -165,7 +132,7 @@ def plot_hplot(
        ax.legend(handles, labels, title=legend_title, **legend_kwargs)
    return ax
     
-def plot_hplotx(grouped_stats, distance_unit=None, ci_show=True, ax=None, display_base_type='tumor', display_target_type='immune cells', color_map=None, palette=None, legend_order=None, legend_title="Group", legend_kwargs=None,):
+def plot_hplotx(grouped_stats, unit=None, ci_show=True, ax=None, display_base_type='tumor', display_target_type='immune cells', color_map=None, palette=None, legend_order=None, legend_title="Group", legend_kwargs=None,):
 
     if color_map is None and palette is None:
         palette = plt.cm.tab10.colors
@@ -209,7 +176,7 @@ def plot_hplotx(grouped_stats, distance_unit=None, ci_show=True, ax=None, displa
         return tick_label
 
     ax.xaxis.set_major_formatter(FuncFormatter(distance_formattyer))
-    ax.set_xlabel(f"Layerwise cellular distance from {display_base_type} border\n(Physical distance{' ('+distance_unit+') ' if distance_unit else ' '}from {display_base_type} border)")  
+    ax.set_xlabel(f"Layerwise cellular distance from {display_base_type} border\n(Physical distance{' ('+unit+') ' if unit else ' '}from {display_base_type} border)")  
     ax.set_ylabel(f"Proportion of {display_target_type}")
     ax.set_title("Tumor Spatial Heterogeneity Profile (H-Plot)")
     ax.legend(title="Group")
