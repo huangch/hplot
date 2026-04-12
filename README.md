@@ -2,6 +2,8 @@
 
 **H-Plot: A spatial heterogeneity visualization for tissue-based distance layers**
 
+![H-Plot cartoon](hplot/docs/_static/hplot_cartoon_hires.png)
+
 `hplot` is a Python package for visualizing the spatial distribution of cell-type proportions across concentric distance layers measured from a tissue boundary (e.g., a tumor border). Inspired by Kaplan-Meier survival curves, the H-Plot replaces time with spatial layer index on the x-axis, making it easy to see how cell composition changes as you move inward or outward across a tissue region.
 
 Both a **target** proportion (e.g., immune cells) and an optional **base** proportion (e.g., total epithelial cells) can be plotted together, with per-layer confidence intervals derived from across-case variability.
@@ -14,7 +16,9 @@ Both a **target** proportion (e.g., immune cells) and an optional **base** propo
 pip install -e .
 ```
 
-**Dependencies:** `pandas`, `numpy`, `scipy`, `matplotlib`
+**Dependencies:** `matplotlib>=3.0`, `pandas>=1.0`, `scipy>=1.6`, `numpy>=1.18`
+
+**Python:** 3.7+
 
 ---
 
@@ -98,7 +102,7 @@ plt.savefig("hplot.png", dpi=300)
 | `color_map` | `dict \| None` | `None` | Explicit `{label: color}` mapping. Overrides `palette`. |
 | `palette` | `sequence \| None` | `None` | Color sequence. Defaults to `plt.cm.tab10`. |
 | `legend_order` | `list \| None` | `None` | Order of legend entries. |
-| `legend_title` | `str \| None` | `None` | Title for the legend box. |
+| `legend_title` | `str \| None` | `None` | Title for the legend box. Falls back to `"Group"` in the renderer. |
 | `legend_kwargs` | `dict \| None` | `None` | Extra kwargs forwarded to `ax.legend()`. |
 
 ### `HPlot.plot()` parameters
@@ -107,7 +111,7 @@ plt.savefig("hplot.png", dpi=300)
 |-----------|------|---------|-------------|
 | `ci_show` | `bool` | `True` | Whether to draw shaded confidence interval bands. |
 | `ax` | `Axes \| None` | `None` | Existing matplotlib axis to draw into. |
-| `display_base_type` | `str` | `"tumor"` | Name of the reference tissue (used in title and x-axis label). |
+| `display_base_type` | `str` | `"tumor"` | Name of the reference/base tissue (used in title and x-axis label). |
 | `display_target_type` | `str` | `"immune cells"` | Name of the target cell type (used in y-axis label). |
 
 ---
