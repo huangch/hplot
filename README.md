@@ -6,7 +6,7 @@
 
 `hplot` is a Python package for visualizing the spatial distribution of cell-type proportions across concentric distance layers measured from a tissue boundary (e.g., a tumor border). Inspired by Kaplan-Meier survival curves, the H-Plot replaces time with spatial layer index on the x-axis, making it easy to see how cell composition changes as you move inward or outward across a tissue region.
 
-One or more **target** proportions (e.g., immune cells, epithelial cells) can be plotted simultaneously, each as a separate line with per-layer confidence intervals derived from across-case variability..
+One or more **target** proportions (e.g., immune cells, epithelial cells) can be plotted simultaneously, each as a separate line with per-layer confidence intervals derived from across-case variability.
 
 ---
 
