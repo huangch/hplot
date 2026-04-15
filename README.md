@@ -2,9 +2,11 @@
 
 **H-Plot: A spatial heterogeneity visualization for tissue-based distance layers**
 
+![H-Plot illustration](docs/_static/hplot_cartoon_hires.png)
+
 `hplot` is a Python package for visualizing the spatial distribution of cell-type proportions across concentric distance layers measured from a tissue boundary (e.g., a tumor border). Inspired by Kaplan-Meier survival curves, the H-Plot replaces time with spatial layer index on the x-axis, making it easy to see how cell composition changes as you move inward or outward across a tissue region.
 
-Both a **target** proportion (e.g., immune cells) and an optional **base** proportion (e.g., total epithelial cells) can be plotted together, with per-layer confidence intervals derived from across-case variability.
+One or more **target** proportions (e.g., immune cells, epithelial cells) can be plotted simultaneously, each as a separate line with per-layer confidence intervals derived from across-case variability.
 
 ---
 
@@ -37,8 +39,8 @@ The input is a CSV file where each row represents one tissue region (case) at on
 |--------|----------|-------------|
 | `layer` | Yes | Integer layer index. `0` = tissue boundary; negative = outside; positive = inside. |
 | `target_prop` | Yes | Proportion of the target cell type (e.g., immune cells) in that layer for that case. |
-| `base_prop` | No | Proportion of a base cell type (e.g., epithelial cells) to overlay for reference. |
-| `case_id` / `group_col` | No | Groups rows into separate H-Plot lines (e.g., tumor subtype). |
+| `base_prop` | No | Proportion of an additional cell type (e.g., epithelial cells) to overlay for reference. Pass as a second entry in `targets`. |
+| `case_id` / `group` | No | Groups rows into separate H-Plot lines (e.g., tumor subtype). |
 | `distance` | No | Mean physical distance (in µm or other unit) corresponding to each layer index. Used for secondary x-axis tick labels. |
 
 ---
@@ -56,7 +58,7 @@ df = pd.read_csv("input.csv")
 hplot = HPlot()
 hplot.fit(
     df,
-    keys=["target_prop", "base_prop"],  # one line per column; use a string for a single key
+    targets=["target_prop", "base_prop"],  # one line per column; use a string for a single target
     layer="layer",
     group="subtype",          # optional: draw one line per group value
     distance="distance",      # optional: physical distances for tick labels
@@ -87,14 +89,14 @@ plt.savefig("hplot.png", dpi=300)
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `df` | `pd.DataFrame` | — | Input data frame. |
-| `keys` | `str \| list[str]` | — | Column name(s) for cell proportions. Each column becomes a separate line on the plot. |
+| `targets` | `str \| list[str]` | — | Column name(s) for cell proportions. Each column becomes a separate line on the plot. |
 | `layer` | `str` | — | Column for the layer index. |
 | `group` | `str \| None` | `None` | Column to split into separate lines (e.g. tumor subtype). |
 | `distance` | `str \| None` | `None` | Column for mean physical distance per layer. |
 | `unit` | `str \| None` | `None` | Unit label shown on the x-axis (e.g. `"µm"`). |
 | `ci` | `float` | `0.95` | Confidence level. Uses t-distribution for n ≤ 30, z-distribution for n > 30. |
 | `color_map` | `dict \| None` | `None` | Explicit `{label: color}` mapping. Overrides `palette`. |
-| `palette` | `sequence \| None` | `None` | Color sequence. Defaults to `plt.cm.tab10`. |
+| `palette` | `sequence \| None` | `None` | Color sequence. Defaults to `plt.cm.tab10.colors`. |
 | `legend_order` | `list \| None` | `None` | Order of legend entries. |
 | `legend_title` | `str \| None` | `None` | Title for the legend box. |
 | `legend_kwargs` | `dict \| None` | `None` | Extra kwargs forwarded to `ax.legend()`. |
@@ -104,8 +106,8 @@ plt.savefig("hplot.png", dpi=300)
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `ci_show` | `bool` | `True` | Whether to draw shaded confidence interval bands. |
-| `ax` | `Axes \| None` | `None` | Existing matplotlib axis to draw into. |
-| `display_base_type` | `str` | `"tumor"` | Name of the reference tissue (used in title and x-axis label). |
+| `ax` | `Axes \| None` | `None` | Existing matplotlib axis to draw into. Creates a new figure if `None`. |
+| `display_base_type` | `str` | `"tumor"` | Name of the reference tissue type (used in title, x-axis label). |
 | `display_target_type` | `str` | `"immune cells"` | Name of the target cell type (used in y-axis label). |
 
 ---
@@ -115,7 +117,7 @@ plt.savefig("hplot.png", dpi=300)
 ```bash
 python run_hplot.py \
   --input input.csv \
-  --keys target_prop base_prop \
+  --targets target_prop base_prop \
   --layer layer \
   --group subtype \
   --distance distance \
@@ -134,7 +136,7 @@ The CLI reads the CSV, groups by `--group` (if provided), and saves one H-Plot f
 | Argument | Short | Default | Description |
 |----------|-------|---------|-------------|
 | `--input` | `-i` | *(required)* | Path to input CSV file. |
-| `--keys` | | `target_prop` | One or more column names for cell proportions (each becomes a separate line). |
+| `--targets` | | `target_prop` | One or more column names for cell proportions (each becomes a separate line). |
 | `--layer` | | `layer` | Column for the layer index. |
 | `--group` | | `None` | Column to split into separate output files. |
 | `--distance` | | `None` | Column for physical distance per layer. |
@@ -154,7 +156,7 @@ from hplot.runners import run_hplot_batch
 
 run_hplot_batch(
     df=df,
-    keys=["target_prop", "base_prop"],  # one or more column names
+    targets=["target_prop", "base_prop"],  # one or more column names
     layer="layer",
     group="subtype",          # optional
     distance="distance",      # optional
@@ -167,6 +169,23 @@ run_hplot_batch(
     dpi=300,
 )
 ```
+
+### `run_hplot_batch()` parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `df` | `pd.DataFrame` | — | Input data frame. |
+| `targets` | `str \| list[str]` | `"target_prop"` | Column name(s) for cell proportions. |
+| `layer` | `str` | `"layer"` | Column for the layer index. |
+| `group` | `str \| None` | `None` | Column to split into separate output files. |
+| `distance` | `str \| None` | `None` | Column for physical distance per layer. |
+| `unit` | `str \| None` | `None` | Physical distance unit label. |
+| `ci` | `float` | `0.95` | Confidence level. |
+| `output` | `str` | `"hplots"` | Directory for output files (created if absent). |
+| `prefix` | `str` | `"hplot"` | Prefix for output filenames. |
+| `ci_show` | `bool` | `True` | Whether to draw confidence interval bands. |
+| `format` | `str` | `"svg"` | Output format: `"svg"`, `"pdf"`, or `"png"`. |
+| `dpi` | `int` | `300` | DPI for raster output (PNG). |
 
 ---
 
@@ -200,4 +219,4 @@ run_hplot.py   — convenience script entry point
 
 ## License
 
-MIT License
+Apache License 2.0 — see [LICENSE](LICENSE) for details.
