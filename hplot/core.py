@@ -7,15 +7,15 @@ class HPlot:
         self.df_ = None
         self.target_grouped_stats_ = {}
 
-    def fit(self, df, keys, layer, group=None, distance=None, unit=None, ci=0.95, color_map=None, palette=None, legend_order=None, legend_title=None, legend_kwargs=None):
-        # Normalise keys to a list
-        key_cols = [keys] if isinstance(keys, str) else list(keys)
-        multi = len(key_cols) > 1
+    def fit(self, df, targets, layer, group=None, distance=None, unit=None, ci=0.95, color_map=None, palette=None, legend_order=None, legend_title=None, legend_kwargs=None):
+        # Normalise targets to a list
+        target_cols = [targets] if isinstance(targets, str) else list(targets)
+        multi = len(target_cols) > 1
         # Drop rows with NA in required columns
-        cols = key_cols + [layer] + ([group] if group else [])
+        cols = target_cols + [layer] + ([group] if group else [])
         df = df.dropna(subset=cols)
         self.df_ = df.copy()
-        self.keys = keys
+        self.targets = targets
         self.layer = layer
         self.group = group
         self.distance = distance
@@ -30,11 +30,11 @@ class HPlot:
             groups = df[group].unique()
             for grp in groups:
                 df_sub = df[df[group] == grp]
-                for prop in key_cols:
+                for prop in target_cols:
                     key = f"{grp} \u2013 {prop}" if multi else grp
                     self.target_grouped_stats_[key] = compute_layer_stats(df_sub, prop, layer, distance, ci=ci)
         else:
-            for prop in key_cols:
+            for prop in target_cols:
                 key = prop if multi else "overall"
                 self.target_grouped_stats_[key] = compute_layer_stats(df, prop, layer, distance, ci=ci)
 

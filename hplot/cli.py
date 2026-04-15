@@ -6,7 +6,7 @@ from hplot.runners import run_hplot_batch
 def main():
     parser = argparse.ArgumentParser(description="Generate H-Plot from spatial heterogeneity data.")
     parser.add_argument("-i", "--input", required=True, help="Input CSV file path")
-    parser.add_argument("--keys", nargs="+", default=["target_prop"], help="One or more column names for target cell proportions (each becomes a separate line on the plot)")
+    parser.add_argument("--targets", nargs="+", default=["target_prop"], help="One or more column names for target cell proportions (each becomes a separate line on the plot)")
     parser.add_argument("--layer", default="layer", help="Column name for the layer distance")
     parser.add_argument("--group", default=None, help="Column name for group (e.g. subtype within region)")
     parser.add_argument("--distance", default=None, help="Column name for distance (e.g. actual Euclidean distance from border rater than layer index)")
@@ -23,7 +23,7 @@ def main():
 
     run_hplot_batch(
         df=df,
-        keys=args.keys,
+        targets=args.targets,
         layer=args.layer,
         group=args.group,
         distance=args.distance,

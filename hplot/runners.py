@@ -3,7 +3,7 @@ from .core import HPlot
 
 def run_hplot_batch(
     df,
-    keys="target_prop",
+    targets="target_prop",
     layer="layer",
     group=None,
     distance=None,
@@ -32,7 +32,7 @@ def run_hplot_batch(
             sub_df = df[df[group] == grp]
 
         h = HPlot()
-        h.fit(sub_df, keys=keys, layer=layer, group=group, distance=distance, unit=unit, ci=ci)
+        h.fit(sub_df, targets=targets, layer=layer, group=group, distance=distance, unit=unit, ci=ci)
         h.plot(ci_show=ci_show)
         filename = os.path.join(output, f"{prefix}_{grp}.{format}")
         h.savefig(filename, dpi=dpi)
