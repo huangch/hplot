@@ -1,6 +1,45 @@
+# Byte-compiled / optimized
 __pycache__/
 *.pyc
 *.pyo
+
+# Distribution / packaging
 *.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Testing
 .pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter
 .ipynb_checkpoints/
+
+# IDE / editor
+.vscode/
+.idea/
+.project
+.pydevproject
+.classpath
+.settings/
+*.swp
+*.swo
+*~
+.spyderproject
+.spyproject
+.ropeproject
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
