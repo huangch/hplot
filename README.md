@@ -217,6 +217,35 @@ run_hplot.py   — convenience script entry point
 
 ---
 
+## Citation
+
+If you use WSInsight or H-Plot in your research, please cite the following:
+
+- **WSInsight** — Huang, C.-H. et al. *npj Precision Oncology* (2025). [https://www.nature.com/articles/s41698-025-00841-9](https://www.nature.com/articles/s41698-025-00841-9)
+- **H-Plot** — Huang, C.-H. et al. *bioRxiv* (2025). [https://www.biorxiv.org/content/10.1101/2025.12.07.692260v1](https://www.biorxiv.org/content/10.1101/2025.12.07.692260v1)
+
+BibTeX:
+
+```bibtex
+@article{wsinsight2025,
+  title   = {Integrative whole slide image and spatial transcriptomics analysis with QuST and QuPath},
+  author  = {Huang, Chao-Hui and others},
+  journal = {npj Precision Oncology},
+  year    = {2025},
+  doi     = {10.1038/s41698-025-00841-9},
+  url     = {https://www.nature.com/articles/s41698-025-00841-9}
+}
+
+@article{hplot2025,
+  title   = {WSInsight as a cloud-native pipeline for single-cell pathology inference on whole-slide images},
+  author  = {Huang, Chao-Hui and others},
+  journal = {bioRxiv},
+  year    = {2025},
+  doi     = {10.1101/2025.12.07.692260},
+  url     = {https://www.biorxiv.org/content/10.1101/2025.12.07.692260v1}
+}
+```
+
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE) for details.
