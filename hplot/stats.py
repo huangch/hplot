@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from scipy.stats import t, norm
 
-def compute_layer_stats(df, prop, layer_col, distance_col, ci=0.95):
+def compute_layer_stats(df, prop, layer_col, distance_col, ci=0.95, use_t=True):
     grouped = df.groupby(layer_col)
     summary = []
 
@@ -16,10 +16,10 @@ def compute_layer_stats(df, prop, layer_col, distance_col, ci=0.95):
             std = np.std(values, ddof=1)
             sem = std / np.sqrt(n)
 
-            if n > 30:
-                z = norm.ppf(1 - (1 - ci) / 2)
-            else:
+            if use_t or n <= 30:
                 z = t.ppf(1 - (1 - ci) / 2, df=n - 1)
+            else:
+                z = norm.ppf(1 - (1 - ci) / 2)
 
             ci_lower = mean - z * sem
             ci_upper = mean + z * sem
