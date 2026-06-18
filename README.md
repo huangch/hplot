@@ -112,6 +112,65 @@ plt.savefig("hplot.png", dpi=300)
 
 ---
 
+## Per-layer p-value track
+
+For a **two-group** comparison of a single target, `hplot` can overlay a per-layer
+p-value as a dashed line on a secondary log y-axis (small p near the bottom). At
+each layer the per-case target values of the two groups are compared with a
+statistical test (Mann-Whitney U by default).
+
+```python
+hplot = HPlot()
+hplot.fit(
+    df,
+    targets="target_prop",     # single target only when pvalue=True
+    layer="layer",
+    group="subtype",           # the two arms to compare
+    distance="distance",
+    unit="µm",
+    pvalue=True,               # compute the per-layer p-value table
+    pvalue_test="mannwhitney", # "mannwhitney" | "ttest" | "welch"
+    pvalue_correction=None,    # None | "bonferroni" | "fdr_bh"
+)
+ax = hplot.plot(
+    display_base_type="tumor",
+    display_target_type="immune cells",
+    pvalue_show=True,          # draw the dashed p-value line + right log axis
+)
+ax.get_figure().savefig("hplot_pvalue.png", dpi=300, bbox_inches="tight")
+```
+
+You can also call the underlying statistics directly:
+
+```python
+from hplot import compute_layer_pvalues
+
+pvals = compute_layer_pvalues(
+    df, prop="target_prop", layer_col="layer", group_col="subtype",
+    groups=("hot", "cold"),   # required if more than two groups exist
+    test="mannwhitney", distance_col="distance", min_n=3, correction="fdr_bh",
+)
+# columns: layer, distance, p_value, stat, n1, n2, p_adj
+```
+
+### p-value parameters
+
+| Parameter | Where | Default | Description |
+|-----------|-------|---------|-------------|
+| `pvalue` | `fit` | `False` | Compute the per-layer p-value table. Requires `group` and a single target. |
+| `pvalue_test` | `fit` | `"mannwhitney"` | Test per layer: `"mannwhitney"`, `"ttest"`, or `"welch"`. |
+| `pvalue_groups` | `fit` | `None` | Explicit `(group_a, group_b)` pair. Required when `group` has more than two values. |
+| `pvalue_correction` | `fit` | `None` | Multiple-testing correction across layers: `None`, `"bonferroni"`, `"fdr_bh"`. |
+| `pvalue_min_n` | `fit` | `3` | Minimum cases per group for a layer to be tested; otherwise `p_value` is `NaN`. |
+| `pvalue_show` | `plot` | `False` | Draw the dashed p-value line on a secondary log axis. |
+| `pvalue_label` | `plot` | auto | Axis/legend label; defaults to `"p-value (<test>)"`. |
+| `pvalue_color` | `plot` | `"black"` | Colour of the p-value line and threshold. |
+| `pvalue_threshold` | `plot` | `0.05` | Significance level drawn as a reference line. |
+| `pvalue_threshold_show` | `plot` | `True` | Whether to draw the threshold reference line. |
+| `pvalue_use_adjusted` | `plot` | `False` | Plot the corrected `p_adj` column instead of `p_value`. |
+
+
+
 ## Batch CLI
 
 ```bash

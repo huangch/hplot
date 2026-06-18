@@ -11,3 +11,11 @@ __version__ = "0.1.0"
 
 from .core import HPlot
 from .runners import run_hplot_batch
+from .stats import compute_layer_stats, compute_layer_pvalues
+
+__all__ = [
+    "HPlot",
+    "run_hplot_batch",
+    "compute_layer_stats",
+    "compute_layer_pvalues",
+]

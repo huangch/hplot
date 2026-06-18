@@ -14,6 +14,13 @@ def plot_hplot(
    legend_order=None,
    legend_title="Group",
    legend_kwargs=None,
+   pvalue_stats=None,
+   pvalue_show=False,
+   pvalue_label="p-value",
+   pvalue_color="black",
+   pvalue_threshold=0.05,
+   pvalue_threshold_show=True,
+   pvalue_use_adjusted=False,
 ):
    """
    Plot H-plot curves from precomputed grouped_stats.
@@ -43,6 +50,21 @@ def plot_hplot(
        Title for legend box.
    legend_kwargs : dict | None
        Extra kwargs forwarded to ax.legend(...).
+   pvalue_stats : pd.DataFrame | None
+       Per-layer p-value table from compute_layer_pvalues (columns 'layer',
+       'p_value', optionally 'p_adj'). Required when pvalue_show is True.
+   pvalue_show : bool
+       Draw the per-layer p-value as a dashed line on a secondary log y-axis.
+   pvalue_label : str
+       Y-axis label / legend entry for the p-value track.
+   pvalue_color : str
+       Colour of the p-value line and reference threshold.
+   pvalue_threshold : float
+       Significance level drawn as a horizontal reference line.
+   pvalue_threshold_show : bool
+       Whether to draw the threshold reference line.
+   pvalue_use_adjusted : bool
+       Plot the multiple-testing-corrected 'p_adj' column instead of 'p_value'.
    """
    if legend_kwargs is None:
        legend_kwargs = {}
@@ -123,12 +145,65 @@ def plot_hplot(
            ax.ticklabel_format(axis="x", style="plain", useOffset=False)
            ax.set_xlabel(f"Cellular distance from {display_base_type} border (layers)")
 
+       # Optional per-layer p-value track on a secondary log y-axis.
+       pvalue_handle = None
+       if pvalue_show:
+           if pvalue_stats is None or len(pvalue_stats) == 0:
+               raise ValueError("pvalue_show=True but no pvalue_stats provided.")
+           pcol = "p_adj" if pvalue_use_adjusted else "p_value"
+           if pcol not in pvalue_stats.columns:
+               raise ValueError(f"pvalue_stats missing '{pcol}' column.")
+           pstats = pvalue_stats.sort_values("layer")
+           xp = pstats["layer"].round().astype(np.int32).to_numpy()
+           yp = pstats[pcol].to_numpy(dtype=float)
+           finite = np.isfinite(yp)
+           axp = ax.twinx()
+           axp.set_yscale("log")
+           if finite.any():
+               (pvalue_handle,) = axp.plot(
+                   xp[finite],
+                   yp[finite],
+                   color=pvalue_color,
+                   linestyle="--",
+                   linewidth=1.2,
+                   marker=None,
+                   label=pvalue_label,
+               )
+               min_p = np.nanmin(yp[finite])
+               axp.set_ylim(top=1.0, bottom=max(min_p * 0.5, 1e-12))
+           if pvalue_threshold_show and pvalue_threshold is not None:
+               axp.axhline(
+                   pvalue_threshold,
+                   color="0.35",
+                   linestyle=(0, (1, 1)),
+                   linewidth=0.8,
+                   alpha=1.0,
+                   zorder=5,
+               )
+               axp.text(
+                   0.995,
+                   pvalue_threshold,
+                   f"p = {pvalue_threshold:g}",
+                   transform=axp.get_yaxis_transform(),
+                   ha="right",
+                   va="bottom",
+                   color="0.35",
+                   fontsize=8,
+                   alpha=1.0,
+                   clip_on=False,
+               )
+           axp.set_ylabel(pvalue_label)
+           axp.grid(False)
+
        # Legend ordering
        handles, labels = ax.get_legend_handles_labels()
        if legend_order is not None:
            idx = [labels.index(l) for l in legend_order if l in labels]
            handles = [handles[i] for i in idx]
            labels = [labels[i] for i in idx]
+       if pvalue_handle is not None:
+           handles = list(handles) + [pvalue_handle]
+           labels = list(labels) + [pvalue_label]
        ax.legend(handles, labels, title=legend_title, **legend_kwargs)
    return ax
     
