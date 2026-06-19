@@ -279,7 +279,7 @@ directory.
 | `ax`                 | `Axes \| None`  | `None`            | Existing matplotlib axis. Creates a new figure if `None`. |
 | `display_base_type`  | `str`           | `"tumor"`         | Reference tissue type (used in title, x-axis).      |
 | `display_target_type`| `str`           | `"immune cells"`  | Target quantity name, interpolated into the y-axis label. |
-| `value_kind`         | `str`           | `"proportion"`    | Y-axis label phrasing: `"proportion"` → *Proportion of {target}*; `"fraction"` → *Fraction of cells in {target}* (niche/CME); `"expression"` → *Mean expression of {target}* (gene). Ignored when `ylabel` is set. |
+| `value_kind`         | `str`           | `"proportion"`    | Y-axis label phrasing: `"proportion"` → *Proportion of {target}*; `"fraction"` → *Fraction of cells in {target}* (niche/CME); `"expression"` → *Mean expression of {target}* (gene); `"interaction"` → *Mean interaction score of {target}* (ligand-receptor CCI). Ignored when `ylabel` is set. |
 | `ylabel`             | `str \| None`   | `None`            | Explicit y-axis label; overrides `value_kind`.      |
 
 ---

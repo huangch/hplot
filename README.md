@@ -109,7 +109,7 @@ plt.savefig("hplot.png", dpi=300)
 | `ax` | `Axes \| None` | `None` | Existing matplotlib axis to draw into. Creates a new figure if `None`. |
 | `display_base_type` | `str` | `"tumor"` | Name of the reference tissue type (used in title, x-axis label). |
 | `display_target_type` | `str` | `"immune cells"` | Name of the target quantity, interpolated into the y-axis label. |
-| `value_kind` | `str` | `"proportion"` | Kind of quantity on the y-axis, selecting the label phrasing: `"proportion"` → *Proportion of {target}* (cell-type fraction); `"fraction"` → *Fraction of cells in {target}* (niche / CME); `"expression"` → *Mean expression of {target}* (gene/signature). Ignored when `ylabel` is given. |
+| `value_kind` | `str` | `"proportion"` | Kind of quantity on the y-axis, selecting the label phrasing: `"proportion"` → *Proportion of {target}* (cell-type fraction); `"fraction"` → *Fraction of cells in {target}* (niche / CME); `"expression"` → *Mean expression of {target}* (gene/signature); `"interaction"` → *Mean interaction score of {target}* (ligand-receptor CCI). Ignored when `ylabel` is given. |
 | `ylabel` | `str \| None` | `None` | Explicit y-axis label. Overrides the `value_kind` template entirely. |
 
 ### Y-axis label semantics

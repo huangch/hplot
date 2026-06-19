@@ -8,10 +8,13 @@ from matplotlib.ticker import MaxNLocator, FuncFormatter
 #   - "proportion": fraction of cells of a given cell type (0..1).
 #   - "fraction":   fraction of cells in a given niche / CME (0..1).
 #   - "expression": mean expression level of a gene/signature (a.u., unbounded).
+#   - "interaction": mean ligand-receptor interaction score (a.u., unbounded);
+#     for cell-cell interaction (CCI) targets such as "CCL19->CCR7".
 _VALUE_KIND_TEMPLATES = {
    "proportion": "Proportion of {target}",
    "fraction": "Fraction of cells in {target}",
    "expression": "Mean expression of {target}",
+   "interaction": "Mean interaction score of {target}",
 }
 
 
@@ -54,6 +57,7 @@ def plot_hplot(
    pvalue_threshold=0.05,
    pvalue_threshold_show=True,
    pvalue_use_adjusted=False,
+   pvalue_ylim=None,
 ):
    """
    Plot H-plot curves from precomputed grouped_stats.
@@ -104,6 +108,11 @@ def plot_hplot(
        Whether to draw the threshold reference line.
    pvalue_use_adjusted : bool
        Plot the multiple-testing-corrected 'p_adj' column instead of 'p_value'.
+   pvalue_ylim : tuple[float, float] | None
+       Explicit ``(bottom, top)`` for the secondary p-value log axis. When
+       ``None`` (default) the range is auto-scaled per panel so the whole
+       p-curve and the threshold line stay in-frame. Pass a fixed range to
+       make p-axes comparable across panels of a multi-panel figure.
    """
    if legend_kwargs is None:
        legend_kwargs = {}
@@ -198,6 +207,26 @@ def plot_hplot(
            finite = np.isfinite(yp)
            axp = ax.twinx()
            axp.set_yscale("log")
+           # Fix the y-range up front so the p=threshold reference is always
+           # in-frame: extend the bottom past both the smallest observed p and
+           # the threshold. This keeps the threshold meaningful even when every
+           # layer is non-significant (whole curve above 0.05) without wasting
+           # log-resolution when p's get tiny.
+           y_top = 1.0
+           if finite.any():
+               y_bottom = np.nanmin(yp[finite]) * 0.5
+           elif pvalue_threshold_show and pvalue_threshold is not None:
+               y_bottom = pvalue_threshold * 0.5
+           else:
+               y_bottom = 1e-3
+           if pvalue_threshold_show and pvalue_threshold is not None:
+               y_bottom = min(y_bottom, pvalue_threshold * 0.5)
+           y_bottom = max(y_bottom, 1e-12)
+           if pvalue_ylim is not None:
+               # explicit fixed range (bottom, top) -- overrides the per-panel
+               # auto-scaling so p-axes are comparable across panels.
+               y_bottom, y_top = pvalue_ylim
+           axp.set_ylim(top=y_top, bottom=y_bottom)
            if finite.any():
                (pvalue_handle,) = axp.plot(
                    xp[finite],
@@ -208,9 +237,12 @@ def plot_hplot(
                    marker=None,
                    label=pvalue_label,
                )
-               min_p = np.nanmin(yp[finite])
-               axp.set_ylim(top=1.0, bottom=max(min_p * 0.5, 1e-12))
-           if pvalue_threshold_show and pvalue_threshold is not None:
+           # Only draw the threshold line/label when it lies within the axis.
+           if (
+               pvalue_threshold_show
+               and pvalue_threshold is not None
+               and y_bottom <= pvalue_threshold <= y_top
+           ):
                axp.axhline(
                    pvalue_threshold,
                    color="0.35",
@@ -229,7 +261,7 @@ def plot_hplot(
                    color="0.35",
                    fontsize=8,
                    alpha=1.0,
-                   clip_on=False,
+                   clip_on=True,
                )
            axp.set_ylabel(pvalue_label)
            axp.grid(False)

@@ -63,7 +63,7 @@ class HPlot:
     def plot(self, ci_show=True, ax=None, display_base_type="tumor", display_target_type="immune cells",
              value_kind="proportion", ylabel=None,
              pvalue_show=False, pvalue_label=None, pvalue_color="black", pvalue_threshold=0.05,
-             pvalue_threshold_show=True, pvalue_use_adjusted=False):
+             pvalue_threshold_show=True, pvalue_use_adjusted=False, pvalue_ylim=None):
         if not self.target_grouped_stats_:
             raise RuntimeError("Call fit() before plot().")
         if pvalue_show and self.layer_pvalues_ is None:
@@ -80,6 +80,7 @@ class HPlot:
             pvalue_stats=self.layer_pvalues_, pvalue_show=pvalue_show, pvalue_label=pvalue_label,
             pvalue_color=pvalue_color, pvalue_threshold=pvalue_threshold,
             pvalue_threshold_show=pvalue_threshold_show, pvalue_use_adjusted=pvalue_use_adjusted,
+            pvalue_ylim=pvalue_ylim,
         )
 
     def savefig(self, filename, **kwargs):
