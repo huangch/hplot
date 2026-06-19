@@ -2,6 +2,37 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import MaxNLocator, FuncFormatter
 
+# Phrasing templates for the y-axis label, keyed by the kind of quantity the
+# H-plot is showing. The y-value is always a per-layer summary, but its meaning
+# differs by target mode:
+#   - "proportion": fraction of cells of a given cell type (0..1).
+#   - "fraction":   fraction of cells in a given niche / CME (0..1).
+#   - "expression": mean expression level of a gene/signature (a.u., unbounded).
+_VALUE_KIND_TEMPLATES = {
+   "proportion": "Proportion of {target}",
+   "fraction": "Fraction of cells in {target}",
+   "expression": "Mean expression of {target}",
+}
+
+
+def _build_ylabel(value_kind, display_target_type, ylabel=None):
+   """Resolve the y-axis label.
+
+   An explicit ``ylabel`` always wins. Otherwise the label is composed from
+   ``value_kind`` (see ``_VALUE_KIND_TEMPLATES``) and ``display_target_type``.
+   """
+   if ylabel is not None:
+       return ylabel
+   try:
+       template = _VALUE_KIND_TEMPLATES[value_kind]
+   except KeyError:
+       raise ValueError(
+           f"Unknown value_kind={value_kind!r}; expected one of "
+           f"{sorted(_VALUE_KIND_TEMPLATES)} or an explicit ylabel."
+       )
+   return template.format(target=display_target_type)
+
+
 def plot_hplot(
    target_grouped_stats,
    unit=None,
@@ -9,6 +40,8 @@ def plot_hplot(
    ax=None,
    display_base_type="tumor",
    display_target_type="immune cells",
+   value_kind="proportion",
+   ylabel=None,
    color_map=None,
    palette=None,
    legend_order=None,
@@ -39,7 +72,13 @@ def plot_hplot(
    display_base_type : str
        Used only for title text.
    display_target_type : str
-       Used only for y-axis label text.
+       Target name interpolated into the y-axis label.
+   value_kind : str
+       Kind of quantity on the y-axis: 'proportion' (cell-type fraction),
+       'fraction' (niche/CME fraction) or 'expression' (mean gene expression).
+       Selects the y-axis label phrasing. Ignored when ``ylabel`` is given.
+   ylabel : str | None
+       Explicit y-axis label. Overrides the ``value_kind`` template entirely.
    color_map : dict[str, str] | None
        Explicit mapping label -> matplotlib color. If provided, overrides palette.
    palette : sequence | None
@@ -107,7 +146,7 @@ def plot_hplot(
                    step="post",
                )
        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-       ax.set_ylabel(f"Proportion of {display_target_type}")
+       ax.set_ylabel(_build_ylabel(value_kind, display_target_type, ylabel))
        ax.set_title(f"{display_base_type.capitalize()} Spatial Heterogeneity Profile (H-plot)", fontweight="bold")
        ax.tick_params(axis="both")
        ax.grid(True, linestyle="--", alpha=0.5)
@@ -207,7 +246,7 @@ def plot_hplot(
        ax.legend(handles, labels, title=legend_title, **legend_kwargs)
    return ax
     
-def plot_hplotx(grouped_stats, unit=None, ci_show=True, ax=None, display_base_type='tumor', display_target_type='immune cells', color_map=None, palette=None, legend_order=None, legend_title="Group", legend_kwargs=None,):
+def plot_hplotx(grouped_stats, unit=None, ci_show=True, ax=None, display_base_type='tumor', display_target_type='immune cells', value_kind="proportion", ylabel=None, color_map=None, palette=None, legend_order=None, legend_title="Group", legend_kwargs=None,):
 
     if color_map is None and palette is None:
         palette = plt.cm.tab10.colors
@@ -252,7 +291,7 @@ def plot_hplotx(grouped_stats, unit=None, ci_show=True, ax=None, display_base_ty
 
     ax.xaxis.set_major_formatter(FuncFormatter(distance_formattyer))
     ax.set_xlabel(f"Layerwise cellular distance from {display_base_type} border\n(Physical distance{' ('+unit+') ' if unit else ' '}from {display_base_type} border)")  
-    ax.set_ylabel(f"Proportion of {display_target_type}")
+    ax.set_ylabel(_build_ylabel(value_kind, display_target_type, ylabel))
     ax.set_title("Tumor Spatial Heterogeneity Profile (H-Plot)")
     ax.legend(title="Group")
     ax.grid(True, linestyle="--", alpha=0.5)

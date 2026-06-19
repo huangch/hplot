@@ -61,6 +61,7 @@ class HPlot:
             )
 
     def plot(self, ci_show=True, ax=None, display_base_type="tumor", display_target_type="immune cells",
+             value_kind="proportion", ylabel=None,
              pvalue_show=False, pvalue_label=None, pvalue_color="black", pvalue_threshold=0.05,
              pvalue_threshold_show=True, pvalue_use_adjusted=False):
         if not self.target_grouped_stats_:
@@ -73,6 +74,7 @@ class HPlot:
         return plot_hplot(
             self.target_grouped_stats_, unit=self.unit, ci_show=ci_show, ax=ax,
             display_base_type=display_base_type, display_target_type=display_target_type,
+            value_kind=value_kind, ylabel=ylabel,
             color_map=self.color_map, palette=self.palette, legend_order=self.legend_order,
             legend_title=self.legend_title, legend_kwargs=self.legend_kwargs,
             pvalue_stats=self.layer_pvalues_, pvalue_show=pvalue_show, pvalue_label=pvalue_label,

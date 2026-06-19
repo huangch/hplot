@@ -108,7 +108,28 @@ plt.savefig("hplot.png", dpi=300)
 | `ci_show` | `bool` | `True` | Whether to draw shaded confidence interval bands. |
 | `ax` | `Axes \| None` | `None` | Existing matplotlib axis to draw into. Creates a new figure if `None`. |
 | `display_base_type` | `str` | `"tumor"` | Name of the reference tissue type (used in title, x-axis label). |
-| `display_target_type` | `str` | `"immune cells"` | Name of the target cell type (used in y-axis label). |
+| `display_target_type` | `str` | `"immune cells"` | Name of the target quantity, interpolated into the y-axis label. |
+| `value_kind` | `str` | `"proportion"` | Kind of quantity on the y-axis, selecting the label phrasing: `"proportion"` → *Proportion of {target}* (cell-type fraction); `"fraction"` → *Fraction of cells in {target}* (niche / CME); `"expression"` → *Mean expression of {target}* (gene/signature). Ignored when `ylabel` is given. |
+| `ylabel` | `str \| None` | `None` | Explicit y-axis label. Overrides the `value_kind` template entirely. |
+
+### Y-axis label semantics
+
+The H-Plot y-value is always a per-layer summary, but its meaning depends on what
+you are plotting, so the label adapts via `value_kind`:
+
+```python
+# Cell-type proportion (default)
+hplot.plot(display_target_type="lymphocytes")                       # "Proportion of lymphocytes"
+# Niche / CME fraction
+hplot.plot(display_target_type="cme_7 (tumor-core)", value_kind="fraction")  # "Fraction of cells in cme_7 (tumor-core)"
+# Gene / signature mean expression
+hplot.plot(display_target_type="CD8A", value_kind="expression")    # "Mean expression of CD8A"
+# Full override
+hplot.plot(ylabel="Mean CD8A expression (a.u.)")
+```
+
+An unknown `value_kind` raises `ValueError`; pass `ylabel` for anything outside
+the three templates.
 
 ---
 
