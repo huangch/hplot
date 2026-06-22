@@ -63,11 +63,15 @@ class HPlot:
     def plot(self, ci_show=True, ax=None, display_base_type="tumor", display_target_type="immune cells",
              value_kind="proportion", ylabel=None,
              pvalue_show=False, pvalue_label=None, pvalue_color="black", pvalue_threshold=0.05,
-             pvalue_threshold_show=True, pvalue_use_adjusted=False, pvalue_ylim=None):
+             pvalue_threshold_show=True, pvalue_use_adjusted=False, pvalue_ylim=None,
+             band=None, band_threshold=None, band_min_width=2, band_color="0.6",
+             band_alpha=0.12, band_label=None):
         if not self.target_grouped_stats_:
             raise RuntimeError("Call fit() before plot().")
         if pvalue_show and self.layer_pvalues_ is None:
             raise RuntimeError("plot(pvalue_show=True) requires fit(..., pvalue=True).")
+        if isinstance(band, str) and band == "auto" and self.layer_pvalues_ is None:
+            raise RuntimeError("plot(band='auto') requires fit(..., pvalue=True).")
         if pvalue_label is None:
             test_name = PVALUE_TEST_LABELS.get(getattr(self, "pvalue_test", ""), "test")
             pvalue_label = f"p-value ({test_name})"
@@ -81,6 +85,8 @@ class HPlot:
             pvalue_color=pvalue_color, pvalue_threshold=pvalue_threshold,
             pvalue_threshold_show=pvalue_threshold_show, pvalue_use_adjusted=pvalue_use_adjusted,
             pvalue_ylim=pvalue_ylim,
+            band=band, band_threshold=band_threshold, band_min_width=band_min_width,
+            band_color=band_color, band_alpha=band_alpha, band_label=band_label,
         )
 
     def savefig(self, filename, **kwargs):

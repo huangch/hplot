@@ -36,6 +36,51 @@ def _build_ylabel(value_kind, display_target_type, ylabel=None):
    return template.format(target=display_target_type)
 
 
+def _contiguous_significant_bands(layers, pvals, threshold, min_width):
+   """Find contiguous layer ranges that pass a per-layer p-value threshold.
+
+   A band is a maximal run of consecutive tested layers whose p-value is
+   finite and below ``threshold``. Only runs spanning at least ``min_width``
+   layers are returned: an isolated single-layer spike is ignored because real
+   spatial biology is smooth and lone blips are the signature of noise. This
+   mirrors the cluster-forming step of a cluster-mass spatial screen.
+
+   Parameters
+   ----------
+   layers : array-like
+       Layer indices (need not be sorted).
+   pvals : array-like
+       Per-layer p-values aligned with ``layers``; NaN/inf break a run.
+   threshold : float
+       Per-layer significance threshold (e.g. 0.05).
+   min_width : int
+       Minimum number of consecutive significant layers for a band to count.
+
+   Returns
+   -------
+   list[tuple[float, float]]
+       ``(lo, hi)`` layer ranges, one per qualifying band.
+   """
+   layers = np.asarray(layers, dtype=float)
+   pvals = np.asarray(pvals, dtype=float)
+   order = np.argsort(layers)
+   layers = layers[order]
+   pvals = pvals[order]
+   sig = np.isfinite(pvals) & (pvals < threshold)
+   bands = []
+   start = None
+   for i, s in enumerate(sig):
+       if s and start is None:
+           start = i
+       elif not s and start is not None:
+           if i - start >= min_width:
+               bands.append((float(layers[start]), float(layers[i - 1])))
+           start = None
+   if start is not None and len(sig) - start >= min_width:
+       bands.append((float(layers[start]), float(layers[-1])))
+   return bands
+
+
 def plot_hplot(
    target_grouped_stats,
    unit=None,
@@ -58,6 +103,12 @@ def plot_hplot(
    pvalue_threshold_show=True,
    pvalue_use_adjusted=False,
    pvalue_ylim=None,
+   band=None,
+   band_threshold=None,
+   band_min_width=2,
+   band_color="0.6",
+   band_alpha=0.12,
+   band_label=None,
 ):
    """
    Plot H-plot curves from precomputed grouped_stats.
@@ -116,6 +167,27 @@ def plot_hplot(
        ``None`` (default) the range is auto-scaled per panel so the whole
        p-curve and the threshold line stay in-frame. Pass a fixed range to
        make p-axes comparable across panels of a multi-panel figure.
+   band : None | tuple | list[tuple] | "auto"
+       Shaded vertical band(s) highlighting spatially significant layer
+       ranges. Pass an explicit ``(lo, hi)`` layer range, a list of such
+       ranges, or the string ``"auto"`` to derive contiguous significant
+       band(s) from ``pvalue_stats`` (a maximal run of layers with
+       p < ``band_threshold`` spanning at least ``band_min_width`` layers).
+       ``"auto"`` requires ``pvalue_stats`` to be supplied. Bands are drawn
+       behind the curves (zorder=0).
+   band_threshold : float | None
+       Per-layer p-value cutoff used when ``band="auto"``. Defaults to
+       ``pvalue_threshold`` when ``None``.
+   band_min_width : int
+       Minimum number of consecutive significant layers for an auto band
+       (single-layer spikes are ignored). Default 2.
+   band_color : str
+       Fill colour of the shaded band(s). Default mid-grey ``"0.6"``.
+   band_alpha : float
+       Opacity of the shaded band(s). Default 0.12.
+   band_label : str | None
+       Legend label for the band(s); only the first span is labelled so the
+       legend has a single entry. ``None`` keeps the band out of the legend.
    """
    if legend_kwargs is None:
        legend_kwargs = {}
@@ -163,6 +235,45 @@ def plot_hplot(
        ax.tick_params(axis="both")
        ax.grid(True, linestyle="--", alpha=0.5)
        ax.axvline(x=0, color="black", linestyle="--", linewidth=1.2, alpha=0.8)
+
+       # Optional shaded "significant band(s)": contiguous layer ranges that
+       # carry the signal. Either supplied explicitly (e.g. the winning band of
+       # an external cluster-mass screen) or derived here from the per-layer
+       # p-value track via band="auto".
+       if band is not None:
+           if isinstance(band, str):
+               if band != "auto":
+                   raise ValueError(
+                       f"band={band!r} not understood; use a (lo, hi) tuple, "
+                       f"a list of tuples, or 'auto'."
+                   )
+               if pvalue_stats is None or len(pvalue_stats) == 0:
+                   raise ValueError(
+                       "band='auto' requires pvalue_stats (fit(..., pvalue=True))."
+                   )
+               bcol = "p_adj" if pvalue_use_adjusted else "p_value"
+               if bcol not in pvalue_stats.columns:
+                   raise ValueError(f"pvalue_stats missing '{bcol}' column for band='auto'.")
+               thr = pvalue_threshold if band_threshold is None else band_threshold
+               bstats = pvalue_stats.sort_values("layer")
+               band_spans = _contiguous_significant_bands(
+                   bstats["layer"].to_numpy(), bstats[bcol].to_numpy(),
+                   thr, band_min_width,
+               )
+           else:
+               # Explicit (lo, hi) or a list/tuple of (lo, hi) ranges.
+               nested = (
+                   len(band) > 0 and isinstance(band[0], (list, tuple, np.ndarray))
+               )
+               band_spans = [tuple(b) for b in band] if nested else [tuple(band)]
+           for j, span in enumerate(band_spans):
+               lo, hi = float(span[0]), float(span[1])
+               if not (np.isfinite(lo) and np.isfinite(hi)):
+                   continue
+               ax.axvspan(
+                   lo, hi, color=band_color, alpha=band_alpha, zorder=0,
+                   label=band_label if (band_label and j == 0) else None,
+               )
 
        # Build layer -> mean physical distance lookup from target stats
        layer_to_dist = {}
