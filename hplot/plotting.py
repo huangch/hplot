@@ -98,6 +98,9 @@ def plot_hplot(
        'p_value', optionally 'p_adj'). Required when pvalue_show is True.
    pvalue_show : bool
        Draw the per-layer p-value as a dashed line on a secondary log y-axis.
+       The p-axis is only created when at least one layer has a valid
+       (finite) p-value; if every layer is untestable the axis is skipped
+       entirely rather than left empty.
    pvalue_label : str
        Y-axis label / legend entry for the p-value track.
    pvalue_color : str
@@ -205,6 +208,10 @@ def plot_hplot(
            xp = pstats["layer"].round().astype(np.int32).to_numpy()
            yp = pstats[pcol].to_numpy(dtype=float)
            finite = np.isfinite(yp)
+       # Only build the secondary p-value axis when at least one layer has a
+       # valid p-value. With no testable layer there is nothing to plot, so an
+       # empty twin axis (bare threshold line + label) would be misleading.
+       if pvalue_show and finite.any():
            axp = ax.twinx()
            axp.set_yscale("log")
            # Fix the y-range up front so the p=threshold reference is always
@@ -213,12 +220,7 @@ def plot_hplot(
            # layer is non-significant (whole curve above 0.05) without wasting
            # log-resolution when p's get tiny.
            y_top = 1.0
-           if finite.any():
-               y_bottom = np.nanmin(yp[finite]) * 0.5
-           elif pvalue_threshold_show and pvalue_threshold is not None:
-               y_bottom = pvalue_threshold * 0.5
-           else:
-               y_bottom = 1e-3
+           y_bottom = np.nanmin(yp[finite]) * 0.5
            if pvalue_threshold_show and pvalue_threshold is not None:
                y_bottom = min(y_bottom, pvalue_threshold * 0.5)
            y_bottom = max(y_bottom, 1e-12)
@@ -227,16 +229,15 @@ def plot_hplot(
                # auto-scaling so p-axes are comparable across panels.
                y_bottom, y_top = pvalue_ylim
            axp.set_ylim(top=y_top, bottom=y_bottom)
-           if finite.any():
-               (pvalue_handle,) = axp.plot(
-                   xp[finite],
-                   yp[finite],
-                   color=pvalue_color,
-                   linestyle="--",
-                   linewidth=1.2,
-                   marker=None,
-                   label=pvalue_label,
-               )
+           (pvalue_handle,) = axp.plot(
+               xp[finite],
+               yp[finite],
+               color=pvalue_color,
+               linestyle="--",
+               linewidth=1.2,
+               marker=None,
+               label=pvalue_label,
+           )
            # Only draw the threshold line/label when it lies within the axis.
            if (
                pvalue_threshold_show
