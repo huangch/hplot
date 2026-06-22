@@ -189,6 +189,50 @@ pvals = compute_layer_pvalues(
 | `pvalue_threshold` | `plot` | `0.05` | Significance level drawn as a reference line. |
 | `pvalue_threshold_show` | `plot` | `True` | Whether to draw the threshold reference line. |
 | `pvalue_use_adjusted` | `plot` | `False` | Plot the corrected `p_adj` column instead of `p_value`. |
+| `pvalue_ylim` | `plot` | `None` | Explicit `(bottom, top)` for the secondary p-value log axis. `None` auto-scales per panel; pass a fixed range to make p-axes comparable across panels. |
+
+---
+
+## Significant-band shading
+
+`plot()` can shade vertical band(s) marking the spatial region(s) that carry the
+signal, drawn behind the curves. This highlights a *contiguous* run of layers
+rather than scattered single-layer spikes — the same idea as the cluster-forming
+step of a cluster-mass spatial screen.
+
+Pass an explicit layer range (e.g. the winning band from your own screen), a list
+of ranges, or `"auto"` to derive the band(s) from the per-layer p-value track:
+
+```python
+# Explicit band(s): a single (lo, hi) range, or a list of them.
+hplot.plot(band=(2, 6))
+hplot.plot(band=[(-6, -4), (2, 6)])
+
+# Auto band: needs fit(..., pvalue=True). Shades each maximal run of layers with
+# p < band_threshold (default = pvalue_threshold) spanning >= band_min_width layers.
+hplot.fit(df, targets="target_prop", layer="layer", group="subtype", pvalue=True)
+hplot.plot(
+    pvalue_show=True,
+    band="auto",
+    band_min_width=2,                       # ignore single-layer spikes
+    band_label="contiguous p<0.05 (>=2 layers)",
+)
+```
+
+### band parameters
+
+| Parameter | Where | Default | Description |
+|-----------|-------|---------|-------------|
+| `band` | `plot` | `None` | `(lo, hi)` layer range, a list of such ranges, or `"auto"` (derive from `pvalue_stats`). `None` draws nothing. |
+| `band_threshold` | `plot` | `None` | Per-layer p-value cutoff for `band="auto"`. Falls back to `pvalue_threshold` when `None`. |
+| `band_min_width` | `plot` | `2` | Minimum number of consecutive significant layers for an auto band (single-layer spikes are ignored). |
+| `band_color` | `plot` | `"0.6"` | Fill colour of the shaded band(s). |
+| `band_alpha` | `plot` | `0.12` | Opacity of the shaded band(s). |
+| `band_label` | `plot` | `None` | Legend label for the band(s); only the first span is labelled. `None` keeps the band out of the legend. |
+
+`band="auto"` requires `fit(..., pvalue=True)`; otherwise `plot()` raises
+`RuntimeError`. Non-finite range edges are skipped, so passing a `(NaN, NaN)`
+band simply draws nothing.
 
 
 
