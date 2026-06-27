@@ -213,7 +213,6 @@ def plot_hplot(
                y,
                label=str(label),
                color=color,
-               drawstyle="steps-post",
                linewidth=2,
            )
            if ci_show:
@@ -227,7 +226,6 @@ def plot_hplot(
                    df["ci_upper"].to_numpy(),
                    color=color,
                    alpha=0.25,
-                   step="post",
                )
        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
        ax.set_ylabel(_build_ylabel(value_kind, display_target_type, ylabel))
