@@ -213,7 +213,6 @@ def plot_hplot(
                y,
                label=str(label),
                color=color,
-               drawstyle="steps-post",
                linewidth=2,
            )
            if ci_show:
@@ -227,7 +226,6 @@ def plot_hplot(
                    df["ci_upper"].to_numpy(),
                    color=color,
                    alpha=0.25,
-                   step="post",
                )
        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
        ax.set_ylabel(_build_ylabel(value_kind, display_target_type, ylabel))
@@ -411,10 +409,10 @@ def plot_hplotx(grouped_stats, unit=None, ci_show=True, ax=None, display_base_ty
         else:
             color = palette[i % len(palette)]
 
-        ax.plot(x, y, label=str(label), color=color, drawstyle="steps-post")
+        ax.plot(x, y, label=str(label), color=color)
 
         if ci_show:
-            ax.fill_between(x, df["ci_lower"], df["ci_upper"], color=color, alpha=0.3, step="post")
+            ax.fill_between(x, df["ci_lower"], df["ci_upper"], color=color, alpha=0.3)
 
     ax.ticklabel_format(axis='x', style='plain', useOffset=False)
 
