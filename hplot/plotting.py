@@ -109,6 +109,13 @@ def plot_hplot(
    band_color="0.6",
    band_alpha=0.12,
    band_label=None,
+   gam_curves=None,
+   gam_curves_ci_show=True,
+   gam_curves_linestyle="--",
+   gam_curves_linewidth=1.8,
+   gam_curves_ci_alpha=0.10,
+   gam_curves_grid=None,
+   gam_curves_label_suffix=" (GAM)",
 ):
    """
    Plot H-plot curves from precomputed grouped_stats.
@@ -188,6 +195,31 @@ def plot_hplot(
    band_label : str | None
        Legend label for the band(s); only the first span is labelled so the
        legend has a single entry. ``None`` keeps the band out of the legend.
+   gam_curves : dict | None
+       GAM smooth-curve overlay from :func:`hplot.stats.gam_group_curves`.
+       Expected format: ``{group_label: (pred_array, ci_array)}`` where
+       *pred_array* is shape ``(G,)`` and *ci_array* is shape ``(G, 2)``.
+       Each group is drawn on top of the raw-mean curve in the same colour
+       using ``gam_curves_linestyle``.  Pass ``None`` to skip (default).
+   gam_curves_ci_show : bool
+       Whether to shade the GAM 95 % pointwise CI band.  Default ``True``.
+   gam_curves_linestyle : str
+       Matplotlib linestyle for the GAM smooth line.  Default ``"--"``.
+   gam_curves_linewidth : float
+       Line width for the GAM smooth line.  Default ``1.8``.
+   gam_curves_ci_alpha : float
+       Opacity of the GAM CI shading (lighter than the raw-mean CI so the
+       two are visually distinct).  Default ``0.10``.
+   gam_curves_grid : array-like | None
+       X-coordinates (layer values) that correspond to the rows of the
+       prediction arrays in ``gam_curves``.  Required when the GAM grid is
+       not aligned with the integer layer indices in ``target_grouped_stats``.
+       When ``None`` the function assumes the GAM grid matches the sorted
+       integer layers found in the first group of ``target_grouped_stats``.
+   gam_curves_label_suffix : str
+       Text appended to the group label in the legend for GAM curve entries.
+       Set to ``""`` to suppress a separate legend entry.  Default
+       ``" (GAM)"``.
    """
    if legend_kwargs is None:
        legend_kwargs = {}
@@ -227,7 +259,51 @@ def plot_hplot(
                    color=color,
                    alpha=0.25,
                )
-       ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+
+       # Optional GAM smooth-curve overlay (Stage-2 confounder-adjusted curves)
+       if gam_curves is not None:
+           # Resolve the x-grid for the GAM predictions.
+           if gam_curves_grid is not None:
+               gam_x = np.asarray(gam_curves_grid, dtype=float)
+           else:
+               # Fall back to sorted integer layers from the first group.
+               first_df = next(iter(target_grouped_stats.values()))
+               gam_x = np.sort(first_df["layer"].round().astype(np.int32).to_numpy())
+           # Determine color index per group (mirrors raw-curve loop above).
+           group_color = {}
+           for i, label in enumerate(target_grouped_stats):
+               if color_map is not None:
+                   group_color[label] = color_map.get(label)
+               else:
+                   group_color[label] = palette[i % len(palette)]
+           for grp_label, (pred, ci) in gam_curves.items():
+               color = group_color.get(grp_label)
+               if color is None:
+                   # GAM group not in target_grouped_stats — pick next palette slot
+                   color = palette[len(group_color) % len(palette)]
+               legend_label = (
+                   f"{grp_label}{gam_curves_label_suffix}"
+                   if gam_curves_label_suffix
+                   else None
+               )
+               ax.plot(
+                   gam_x,
+                   pred,
+                   color=color,
+                   linestyle=gam_curves_linestyle,
+                   linewidth=gam_curves_linewidth,
+                   label=legend_label,
+               )
+               if gam_curves_ci_show and ci is not None:
+                   ax.fill_between(
+                       gam_x,
+                       ci[:, 0],
+                       ci[:, 1],
+                       color=color,
+                       alpha=gam_curves_ci_alpha,
+                   )
+
+
        ax.set_ylabel(_build_ylabel(value_kind, display_target_type, ylabel))
        ax.set_title(f"{display_base_type.capitalize()} Spatial Heterogeneity Profile (H-plot)", fontweight="bold")
        ax.tick_params(axis="both")

@@ -16,8 +16,12 @@ dependencies = [
   "matplotlib>=3.0",
   "pandas>=1.0",
   "scipy>=1.6",
-  "numpy>=1.18"
+  "numpy>=1.18",
+  "pygam>=0.9"
 ]
+
+[project.scripts]
+hplot = "hplot.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/yourusername/hplot"
