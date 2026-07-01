@@ -202,6 +202,85 @@ def compute_layer_pvalues(
     return out
 
 # ---------------------------------------------------------------------------
+# Single-slide spatial-uniformity permutation test
+# ---------------------------------------------------------------------------
+
+def spatial_uniformity_test(
+    cells_df,
+    layer_col,
+    target_col,
+    n_perm=2000,
+    seed=42,
+    progress=True,
+):
+    """Single-slide spatial-uniformity permutation test.
+
+    Tests whether a per-cell target quantity is spatially non-uniform across
+    border layers within one slide. The statistic is the sum of squared
+    deviations of the per-layer mean target from its grand mean::
+
+        T = sum_L ( mean_L - mean_bar ) ** 2
+
+    where ``mean_L`` is the mean of ``target_col`` among cells at layer L. The
+    null distribution is built by shuffling the target values across cells
+    (breaking the layer<->value association) ``n_perm`` times; the p-value is
+    the fraction of permuted statistics >= the observed statistic.
+
+    This is distinct from :func:`cluster_mass_screen`, which is a
+    between-group Kruskal-Wallis cluster-mass test across patients.
+
+    Parameters
+    ----------
+    cells_df : pandas.DataFrame
+        Per-cell table with a layer column and a target column.
+    layer_col : str
+        Integer (or coercible) border-layer index column.
+    target_col : str
+        Per-cell target quantity (e.g. a 0/1 cell-type indicator).
+    n_perm : int
+        Number of shuffles for the null distribution. Default 2000.
+    seed : int
+        RNG seed. Default 42.
+    progress : bool
+        Show a tqdm progress bar if available. Default True.
+
+    Returns
+    -------
+    dict
+        ``observed_stat`` (float), ``perm_p`` (float),
+        ``null_distribution`` (numpy.ndarray of length ``n_perm``).
+    """
+    rng_local = np.random.default_rng(seed)
+    df = cells_df.dropna(subset=[layer_col]).copy()
+    df[layer_col] = df[layer_col].astype(int)
+
+    def _curve_stat(tgt_values):
+        tmp = df[[layer_col]].copy()
+        tmp["_tgt"] = np.asarray(tgt_values, dtype=float)
+        props = tmp.groupby(layer_col)["_tgt"].mean()
+        return float(np.sum((props - props.mean()) ** 2))
+
+    tgt_vals = df[target_col].to_numpy(dtype=float).copy()
+    observed_stat = _curve_stat(tgt_vals)
+
+    iterator = range(n_perm)
+    if progress:
+        try:
+            from tqdm.auto import tqdm as _tqdm
+            iterator = _tqdm(iterator, desc="perm", leave=False)
+        except ImportError:
+            pass
+
+    null_dist = np.empty(n_perm)
+    for i in iterator:
+        rng_local.shuffle(tgt_vals)
+        null_dist[i] = _curve_stat(tgt_vals)
+    perm_p = float((null_dist >= observed_stat).mean())
+    return dict(observed_stat=observed_stat, perm_p=perm_p,
+                null_distribution=null_dist)
+
+
+# ---------------------------------------------------------------------------
 # Stage-2 GAM effect-size functions
 # ---------------------------------------------------------------------------
 

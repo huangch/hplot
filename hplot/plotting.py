@@ -521,3 +521,4 @@ def plot_hplotx(grouped_stats, unit=None, ci_show=True, ax=None, display_base_ty
     ax.xaxis.set_major_locator(MaxNLocator(integer=True))
 
     return ax
+
