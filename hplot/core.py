@@ -38,6 +38,7 @@ class HPlot:
         self.target_grouped_stats_ = {}
         self.layer_pvalues_ = None
         self.gam_curves_ = {}
+        self.gam_grid_ = None
 
     def fit(self, df, targets, layer, group=None, distance=None, unit=None, ci=0.95, color_map=None, palette=None, legend_order=None, legend_title=None, legend_kwargs=None,
             pvalue=False, pvalue_test="mannwhitney", pvalue_groups=None, pvalue_correction=None, pvalue_min_n=3,
@@ -86,6 +87,7 @@ class HPlot:
             if grid is None:
                 grid = np.sort(df[layer].dropna().unique()).astype(float)
             grid = np.asarray(grid, dtype=float)
+            self.gam_grid_ = grid
             dist_by_layer = df.groupby(layer)[distance].mean() if distance else None
             for prop in target_cols:
                 if self.group:
@@ -132,6 +134,7 @@ class HPlot:
                 min_n=pvalue_min_n,
                 correction=pvalue_correction,
             )
+        return self
 
     def plot(self, ci_show=True, ax=None, display_base_type="tumor", display_target_type="immune cells",
              value_kind="proportion", ylabel=None,
@@ -185,3 +188,43 @@ class HPlot:
                     f"{list(self.gam_curves_)}.")
             target = next(iter(self.gam_curves_))
         return gam_delta_curve(self.gam_curves_[target], groups=groups)
+
+    def plot_delta(self, target=None, groups=None, ax=None, **kwargs):
+        """Draw the differential H-plot-GAM (ΔH-Plot-GAM) panel.
+
+        Requires a prior ``fit(..., smoother="gam", group=...)`` with two
+        groups. Computes the layer-wise difference via :meth:`gam_delta` and
+        renders it with :func:`hplot.plotting.plot_delta_hplot_gam`.
+
+        The high/low fill colours are taken from ``self.color_map`` when it
+        supplies the two group labels; otherwise the plotting defaults apply.
+        Extra keyword arguments (``ref_band``, ``ref_peak``, ``xlim``, ...) are
+        forwarded to :func:`hplot.plotting.plot_delta_hplot_gam`.
+        """
+        from .plotting import plot_delta_hplot_gam
+        if not self.gam_curves_:
+            raise RuntimeError("plot_delta() requires fit(..., smoother='gam').")
+        if self.gam_grid_ is None:
+            raise RuntimeError("gam_grid_ is unset; re-run fit(..., smoother='gam').")
+        if target is None:
+            if len(self.gam_curves_) != 1:
+                raise ValueError(
+                    "Multiple targets fitted; pass target= to pick one of "
+                    f"{list(self.gam_curves_)}.")
+            target = next(iter(self.gam_curves_))
+        if groups is None:
+            low_label, high_label = list(self.gam_curves_[target].keys())[:2]
+        else:
+            low_label, high_label = groups
+        diff = self.gam_delta(target=target, groups=(low_label, high_label))
+        cm = self.color_map or {}
+        color_kwargs = {}
+        if high_label in cm:
+            color_kwargs["high_color"] = cm[high_label]
+        if low_label in cm:
+            color_kwargs["low_color"] = cm[low_label]
+        color_kwargs.update(kwargs)
+        return plot_delta_hplot_gam(
+            self.gam_grid_, *diff, ax=ax,
+            group_labels=(low_label, high_label), **color_kwargs,
+        )

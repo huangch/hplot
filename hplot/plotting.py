@@ -463,7 +463,276 @@ def plot_hplot(
            labels = list(labels) + [pvalue_label]
        ax.legend(handles, labels, title=legend_title, **legend_kwargs)
    return ax
-    
+
+
+def plot_hplot_gam(
+    grid,
+    curves,
+    *,
+    ax=None,
+    group_labels=None,
+    color_map=None,
+    palette=None,
+    ci_show=True,
+    ci_alpha=0.18,
+    linewidth=2.0,
+    zero_line=True,
+    ref_band=None,
+    ref_peak=None,
+    ref_band_color="0.6",
+    ref_band_alpha=0.12,
+    ref_peak_color="0.3",
+    xlabel="border layer L",
+    ylabel="value",
+    xlim=None,
+    legend=True,
+    legend_fontsize=8,
+    legend_loc="upper left",
+):
+    """Draw a GAM-smoothed H-plot (H-Plot-GAM) panel from per-group smooths.
+
+    Renders the penalised-spline smooth of each group with its pointwise CI
+    band, i.e. the top panel that pairs with :func:`plot_delta_hplot_gam`. This
+    is the lightweight, grid-friendly functional counterpart to
+    ``HPlot.fit(smoother="gam").plot()`` — it draws only the smooth curves (no
+    raw layer means, no secondary distance axis) so it composes cleanly into a
+    dense multi-panel figure.
+
+    Parameters
+    ----------
+    grid : array-like, shape (n_grid,)
+        Layer coordinates that the prediction arrays are evaluated on.
+    curves : dict
+        Output of :func:`hplot.stats.gam_group_curves`:
+        ``{group_label: (pred_array, ci_array)}`` with *pred_array* shape
+        ``(n_grid,)`` and *ci_array* shape ``(n_grid, 2)`` (columns
+        ``[lower, upper]``).
+    ax : matplotlib.axes.Axes | None
+        Axis to draw into; a new one is created when ``None``.
+    group_labels : sequence | None
+        Order (and optional subset) of ``curves`` keys to draw. Defaults to the
+        insertion order of ``curves``.
+    color_map : dict | None
+        Mapping ``group_label -> colour``. Groups not present fall back to
+        ``palette``.
+    palette : sequence | None
+        Colour cycle used when a label is absent from ``color_map``. Defaults to
+        ``matplotlib.cm.tab10``.
+    ci_show : bool
+        Shade the pointwise CI band. Default ``True``.
+    ci_alpha : float
+        Opacity of the CI shading. Default ``0.18``.
+    linewidth : float
+        Width of the smooth line. Default ``2.0``.
+    zero_line : bool
+        Draw a dashed vertical reference at layer 0 (the boundary). Default
+        ``True``.
+    ref_band : tuple[float, float] | None
+        ``(lo, hi)`` reference span (e.g. a Stage-1 cluster-mass band).
+    ref_peak : float | None
+        Reference x-position (e.g. a Stage-1 peak layer).
+    ref_band_color, ref_band_alpha, ref_peak_color : str, float, str
+        Styling of the reference markers.
+    xlabel, ylabel : str
+        Axis labels. Pass ``""`` to leave an axis unlabelled (useful for inner
+        panels of a grid).
+    xlim : tuple[float, float] | None
+        Explicit x-range; defaults to ``(grid[0], grid[-1])``.
+    legend : bool
+        Draw a legend of the group labels. Default ``True``.
+    legend_fontsize : float
+        Font size for the legend.
+    legend_loc : str
+        Legend location.
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+        The axis drawn into.
+    """
+    grid = np.asarray(grid, dtype=float)
+    if group_labels is None:
+        group_labels = list(curves.keys())
+    if color_map is None and palette is None:
+        palette = plt.cm.tab10.colors
+
+    if ax is None:
+        _, ax = plt.subplots(figsize=(5.0, 3.2))
+
+    for i, label in enumerate(group_labels):
+        pred, ci = curves[label]
+        pred = np.asarray(pred, dtype=float)
+        if color_map is not None and label in color_map:
+            color = color_map[label]
+        else:
+            color = palette[i % len(palette)]
+        ax.plot(grid, pred, color=color, lw=linewidth, label=str(label))
+        if ci_show and ci is not None:
+            ci = np.asarray(ci, dtype=float)
+            ax.fill_between(grid, ci[:, 0], ci[:, 1], color=color, alpha=ci_alpha, lw=0)
+
+    if ref_band is not None:
+        ax.axvspan(
+            float(ref_band[0]), float(ref_band[1]),
+            color=ref_band_color, alpha=ref_band_alpha, zorder=0,
+        )
+    if ref_peak is not None:
+        ax.axvline(float(ref_peak), color=ref_peak_color, lw=0.8, ls=":", alpha=0.7)
+    if zero_line:
+        ax.axvline(0, color="black", lw=1, ls="--", alpha=0.5)
+
+    ax.set_xlim(xlim if xlim is not None else (grid[0], grid[-1]))
+    if xlabel:
+        ax.set_xlabel(xlabel)
+    if ylabel:
+        ax.set_ylabel(ylabel)
+    if legend:
+        ax.legend(fontsize=legend_fontsize, loc=legend_loc)
+    return ax
+
+
+def plot_delta_hplot_gam(
+    grid,
+    diff_pred,
+    ci_lower,
+    ci_upper,
+    sig_pos,
+    sig_neg,
+    *,
+    ax=None,
+    group_labels=("low", "high"),
+    high_color="#d62728",
+    low_color="#1f77b4",
+    line_color="0.3",
+    ci_color="0.75",
+    ci_alpha=0.35,
+    sig_alpha=0.45,
+    ref_band=None,
+    ref_peak=None,
+    ref_band_color="0.6",
+    ref_band_alpha=0.10,
+    ref_peak_color="0.3",
+    xlabel="border layer L",
+    ylabel="\u0394 (high \u2212 low)",
+    xlim=None,
+    show_sig_pct=True,
+    show_legend=True,
+    legend_fontsize=6,
+):
+    """Draw a differential H-plot-GAM (:math:`\\Delta`H-Plot-GAM) panel.
+
+    Renders the layer-wise difference curve
+    :math:`\\Delta(L) = f_{high}(L) - f_{low}(L)` produced by
+    :func:`hplot.stats.gam_delta_curve`: a propagated 95 % CI band that is
+    coloured with ``high_color`` where the high group is pointwise larger
+    (``sig_pos``) and ``low_color`` where the low group is pointwise larger
+    (``sig_neg``), grey elsewhere, with a zero reference line.
+
+    This is the companion of the H-Plot-GAM top panel (the per-group smooths,
+    drawn by :func:`plot_hplot` with ``smoother='gam'`` / ``gam_curves=``).
+
+    .. warning::
+        The ``sig_pos`` / ``sig_neg`` colouring reflects **pointwise,
+        multiple-comparison-uncorrected** CI exclusion of zero (see the warning
+        in :func:`hplot.stats.gam_delta_curve`). Treat it as
+        visualisation / localisation only. For confirmatory inference use
+        :func:`hplot.stats.cluster_mass_screen` with FDR control. The optional
+        ``ref_band`` / ``ref_peak`` markers come from that *separate* method
+        (e.g. a Stage-1 cluster-mass band) and are drawn only as a light
+        reference; they are not implied to coincide with the coloured region.
+
+    Parameters
+    ----------
+    grid : array-like, shape (n_grid,)
+        Layer coordinates aligned with the difference arrays (the GAM grid).
+    diff_pred, ci_lower, ci_upper : array-like, shape (n_grid,)
+        Point estimate and propagated CI bounds from
+        :func:`hplot.stats.gam_delta_curve`.
+    sig_pos, sig_neg : array-like of bool, shape (n_grid,)
+        Pointwise significance masks (high>low and low>high respectively).
+    ax : matplotlib.axes.Axes | None
+        Axis to draw into; a new one is created when ``None``.
+    group_labels : tuple[str, str]
+        ``(low_label, high_label)`` used to build the legend entries.
+    high_color, low_color : str
+        Fill colours for the ``sig_pos`` and ``sig_neg`` regions.
+    line_color : str
+        Colour of the :math:`\\Delta` point-estimate line.
+    ci_color, ci_alpha : str, float
+        Colour / opacity of the full (non-significant) CI band.
+    sig_alpha : float
+        Opacity of the coloured significant regions.
+    ref_band : tuple[float, float] | None
+        ``(lo, hi)`` reference span (e.g. a Stage-1 cluster-mass band).
+    ref_peak : float | None
+        Reference x-position (e.g. a Stage-1 peak layer).
+    ref_band_color, ref_band_alpha, ref_peak_color : str, float, str
+        Styling of the reference markers.
+    xlabel, ylabel : str
+        Axis labels.
+    xlim : tuple[float, float] | None
+        Explicit x-range; defaults to ``(grid[0], grid[-1])``.
+    show_sig_pct : bool
+        Annotate the fraction of the layer range that is pointwise significant.
+    show_legend : bool
+        Draw a legend when any region is significant.
+    legend_fontsize : float
+        Font size for the legend.
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+        The axis drawn into.
+    """
+    grid = np.asarray(grid, dtype=float)
+    diff_pred = np.asarray(diff_pred, dtype=float)
+    ci_lower = np.asarray(ci_lower, dtype=float)
+    ci_upper = np.asarray(ci_upper, dtype=float)
+    sig_pos = np.asarray(sig_pos, dtype=bool)
+    sig_neg = np.asarray(sig_neg, dtype=bool)
+    lo_lab, hi_lab = group_labels
+
+    if ax is None:
+        _, ax = plt.subplots(figsize=(5.0, 1.8))
+
+    ax.fill_between(grid, ci_lower, ci_upper, color=ci_color, alpha=ci_alpha, lw=0)
+    ax.fill_between(
+        grid, ci_lower, ci_upper, where=sig_pos,
+        color=high_color, alpha=sig_alpha, lw=0, label=f"{hi_lab}>{lo_lab}",
+    )
+    ax.fill_between(
+        grid, ci_lower, ci_upper, where=sig_neg,
+        color=low_color, alpha=sig_alpha, lw=0, label=f"{lo_lab}>{hi_lab}",
+    )
+    ax.plot(grid, diff_pred, color=line_color, lw=1.5)
+    ax.axhline(0, color="black", lw=0.8, ls="--", alpha=0.6)
+
+    if ref_band is not None:
+        ax.axvspan(
+            float(ref_band[0]), float(ref_band[1]),
+            color=ref_band_color, alpha=ref_band_alpha, zorder=0,
+        )
+    if ref_peak is not None:
+        ax.axvline(float(ref_peak), color=ref_peak_color, lw=0.8, ls=":", alpha=0.7)
+
+    ax.set_xlim(xlim if xlim is not None else (grid[0], grid[-1]))
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+
+    if show_sig_pct and len(grid):
+        pct = 100.0 * int(np.sum(sig_pos) + np.sum(sig_neg)) / len(grid)
+        ax.text(
+            0.97, 0.90, f"{pct:.0f}% sig.", ha="right", va="top",
+            transform=ax.transAxes, fontsize=6.5,
+        )
+    if show_legend and (np.any(sig_pos) or np.any(sig_neg)):
+        ax.legend(
+            fontsize=legend_fontsize, loc="lower left",
+            handlelength=1, handletextpad=0.4, borderpad=0.3,
+        )
+    return ax
+
+
 def plot_hplotx(grouped_stats, unit=None, ci_show=True, ax=None, display_base_type='tumor', display_target_type='immune cells', value_kind="proportion", ylabel=None, color_map=None, palette=None, legend_order=None, legend_title="Group", legend_kwargs=None,):
 
     if color_map is None and palette is None:

@@ -11,6 +11,7 @@ __version__ = "0.1.0"
 
 from .core import HPlot
 from .runners import run_hplot_batch
+from .plotting import plot_hplot, plot_hplot_gam, plot_delta_hplot_gam
 from .stats import (
     compute_layer_stats,
     compute_layer_pvalues,
@@ -25,6 +26,9 @@ from .stats import (
 __all__ = [
     "HPlot",
     "run_hplot_batch",
+    "plot_hplot",
+    "plot_hplot_gam",
+    "plot_delta_hplot_gam",
     "compute_layer_stats",
     "compute_layer_pvalues",
     "gam_group_curves",

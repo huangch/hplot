@@ -15,7 +15,7 @@ The analysis is structured in **three stages** with increasing specificity:
 |-------|------|----------------|
 | 0 | Per-layer mean ± CI curve | `HPlot.fit()` / `hplot plot` |
 | 1 | Cluster-mass permutation test — which layer window is significant? | `compute_layer_pvalues()` / `hplot test --permutations` |
-| 2 | GAM effect size — how large is the effect, and is it a demographic confound? | `gam_pooled_effect()` / `hplot gam` |
+| 2 | H-Plot–GAM effect size (smooth per-group curves + ΔH-Plot–GAM difference) — how large is the effect, and is it a demographic confound? | `gam_group_curves()`, `gam_delta_curve()`, `gam_pooled_effect()` / `hplot gam` |
 
 ---
 
@@ -225,6 +225,33 @@ CI(l) = f̂(l) ± 1.96 · SE_f̂(l)
 
 where `SE_f̂(l) = sqrt[B(l)^T (B^T B + λ D^T D)^{-1} B(l) · σ̂²]`.
 
+### Differential curve — ΔH-Plot–GAM
+
+The per-group smooths from `gam_group_curves()` are the **H-Plot–GAM** view
+(one penalised curve per group, drawn on top of the raw layer means). Their
+layer-wise difference is the **differential H-Plot–GAM** (ΔH-Plot–GAM):
+
+```
+Δ(l) = f̂_high(l) − f̂_low(l)
+```
+
+`gam_delta_curve()` computes this together with a CI propagated in quadrature
+(Gaussian error propagation, assuming the two group models are independent):
+
+```
+σ_Δ(l) = sqrt[ σ_high(l)² + σ_low(l)² ]      CI(l) = Δ(l) ± σ_Δ(l)
+```
+
+and two pointwise significance masks: `sig_pos` where the CI excludes 0 from
+below (high group larger) and `sig_neg` where it excludes 0 from above (low
+group larger).
+
+> **Pointwise, not corrected.** `sig_pos` / `sig_neg` reflect layer-by-layer CI
+> exclusion of zero and are **not** corrected for multiple comparisons across
+> layers. Use the ΔH-Plot–GAM colouring for visualisation and localisation
+> only; use the Stage-1 cluster-mass permutation test (with FDR) for
+> confirmatory inference.
+
 ### Stage-1 double-dipping guard
 
 **Always pass the full layer range to GAM functions.**  Fitting the GAM only on
@@ -239,12 +266,12 @@ apparent effect.  The correct workflow is:
 ### Python API
 
 ```python
-from hplot.stats import gam_group_curves, gam_pooled_effect
+from hplot.stats import gam_group_curves, gam_pooled_effect, gam_delta_curve
 import numpy as np
 
 grid = np.arange(df["layer"].min(), df["layer"].max() + 1)
 
-# Per-group smooth curves (for plotting)
+# Per-group smooth curves — the H-Plot–GAM view (for plotting)
 curves = gam_group_curves(
     long_df=df,
     target_col="immune_fraction",
@@ -254,6 +281,11 @@ curves = gam_group_curves(
     groups=("HPV-", "HPV+"),
 )
 # curves["HPV+"] -> (pred_array shape=(G,), ci_array shape=(G,2))
+
+# Difference curve — the ΔH-Plot–GAM view
+diff, ci_lo, ci_hi, sig_pos, sig_neg = gam_delta_curve(
+    curves, groups=("HPV-", "HPV+"),   # (low, high) -> Δ = high − low
+)
 
 # Pooled effect at the tumour border (layer 0), unadjusted
 effect, pval, n = gam_pooled_effect(
@@ -290,9 +322,72 @@ hplot gam -i data.csv --target immune_fraction --group hpv_status \
 
 ---
 
-## Putting it all together — `plot_hplot()`
+## Putting it all together
 
-All three stages are visualised in a single call:
+### One-stop H-Plot–GAM via the `HPlot` class
+
+`HPlot.fit(smoother="gam")` fits the per-group GAM smooths and renders them as
+the H-Plot–GAM top panel; `HPlot.plot_delta()` draws the matching ΔH-Plot–GAM
+difference panel below it:
+
+```python
+from hplot import HPlot
+import matplotlib.pyplot as plt
+
+fig, (ax_top, ax_delta) = plt.subplots(
+    2, 1, figsize=(6, 5), sharex=True,
+    gridspec_kw={"height_ratios": [3, 1.4]},
+)
+
+hp = (
+    HPlot()
+    .fit(df, "immune_fraction", layer="layer", group="hpv_status",
+         smoother="gam", gam_group_order=["HPV-", "HPV+"],
+         color_map={"HPV+": "#d62728", "HPV-": "#1f77b4"})
+)
+
+# Top: H-Plot–GAM (per-group smooths ± 95 % CI)
+hp.plot(ax=ax_top, value_kind="proportion", display_target_type="immune cells")
+
+# Bottom: ΔH-Plot–GAM (high − low, coloured where the pointwise CI excludes 0)
+hp.plot_delta(ax=ax_delta, ref_band=(band_lo, band_hi), ref_peak=peak_layer)
+```
+
+`ref_band` / `ref_peak` are optional reference markers (e.g. the Stage-1
+cluster-mass band and peak); they come from a *different* method and are drawn
+lightly, not implied to coincide with the coloured region.
+
+For a bare axis without the `HPlot` wrapper, use the two functional plotters
+directly with the `gam_group_curves()` / `gam_delta_curve()` output — this is
+the grid-friendly path used for dense multi-panel figures:
+
+```python
+from hplot import plot_hplot_gam, plot_delta_hplot_gam
+from hplot.stats import gam_group_curves, gam_delta_curve
+import numpy as np
+
+grid = np.linspace(-7, 14, 200)
+curves = gam_group_curves(df, "immune_fraction", "layer", "hpv_status", grid,
+                          groups=("HPV-", "HPV+"))
+
+# Top: H-Plot–GAM (per-group smooths ± CI)
+plot_hplot_gam(
+    grid, curves, ax=ax_top, group_labels=["HPV-", "HPV+"],
+    color_map={"HPV+": "#d62728", "HPV-": "#1f77b4"},
+    ref_band=(band_lo, band_hi), ylabel="immune fraction",
+)
+
+# Bottom: ΔH-Plot–GAM (high − low)
+plot_delta_hplot_gam(
+    grid, *gam_delta_curve(curves, groups=("HPV-", "HPV+")),
+    ax=ax_delta, group_labels=("HPV-", "HPV+"),
+    high_color="#d62728", low_color="#1f77b4",
+)
+```
+
+### Single-panel overlay via `plot_hplot()`
+
+All three stages can also be layered into one panel:
 
 ```python
 import hplot
@@ -301,8 +396,7 @@ from hplot.plotting import plot_hplot
 import numpy as np, matplotlib.pyplot as plt
 
 # Stage 0
-hp = hplot.HPlot(df, target="immune_fraction", layer="layer", group="hpv_status")
-hp.fit()
+hp = hplot.HPlot().fit(df, "immune_fraction", layer="layer", group="hpv_status")
 
 # Stage 1
 pvals = compute_layer_pvalues(df, prop="immune_fraction",
@@ -316,7 +410,7 @@ gam_curves = gam_group_curves(df, "immune_fraction", "layer", "hpv_status", grid
 # Single figure with all three layers
 fig, ax = plt.subplots(figsize=(9, 4))
 plot_hplot(
-    hp.grouped_stats,
+    hp.target_grouped_stats_,
     ax=ax,
     pvalue_stats=pvals,            # Stage 1: p-value track (right y-axis)
     pvalue_show=True,
@@ -339,6 +433,31 @@ plot_hplot(
 | `gam_curves_ci_alpha` | `0.10` | Opacity of the GAM CI shading. |
 | `gam_curves_grid` | `None` | X-coordinates aligned with the prediction arrays. |
 | `gam_curves_label_suffix` | `" (GAM)"` | Appended to the group label in the legend. |
+
+### `plot_hplot_gam()` parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `grid` | — | Layer coordinates the smooths are evaluated on. |
+| `curves` | — | `{group: (pred, ci)}` from `gam_group_curves()`. |
+| `group_labels` | `None` | Order/subset of `curves` keys to draw. |
+| `color_map` | `None` | `{group: colour}`; falls back to `palette`. |
+| `ci_show` / `ci_alpha` | `True` / `0.18` | Show / opacity of the pointwise CI band. |
+| `zero_line` | `True` | Dashed vertical reference at layer 0. |
+| `ref_band` / `ref_peak` | `None` | Reference span / x-position (e.g. Stage-1 band / peak). |
+
+### `plot_delta_hplot_gam()` parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `grid` | — | Layer coordinates aligned with the difference arrays. |
+| `diff_pred`, `ci_lower`, `ci_upper` | — | Δ estimate and propagated CI from `gam_delta_curve()`. |
+| `sig_pos`, `sig_neg` | — | Pointwise significance masks (high>low / low>high). |
+| `group_labels` | `("low", "high")` | `(low, high)` labels used in the legend. |
+| `high_color` / `low_color` | red / blue | Fill colours for the significant regions. |
+| `ref_band` | `None` | `(lo, hi)` reference span (e.g. Stage-1 band). |
+| `ref_peak` | `None` | Reference x-position (e.g. Stage-1 peak). |
+| `show_sig_pct` | `True` | Annotate the pointwise-significant fraction of the range. |
 
 ---
 
@@ -394,10 +513,10 @@ Outputs: effect size (Δ), Wald p-value, n; optionally per-group curve CSV.
 
 ```
 hplot/
-  core.py      — HPlot class (fit / plot / savefig)
-  plotting.py  — plot_hplot() rendering function
+  core.py      — HPlot class (fit / plot / plot_delta / gam_delta / savefig)
+  plotting.py  — plot_hplot(), plot_hplot_gam() and plot_delta_hplot_gam() rendering functions
   stats.py     — compute_layer_stats(), compute_layer_pvalues(),
-                 gam_group_curves(), gam_pooled_effect()
+                 gam_group_curves(), gam_delta_curve(), gam_pooled_effect()
   runners.py   — run_hplot_batch() batch helper
   cli.py       — argparse CLI (hplot plot / test / gam)
 run_hplot.py   — legacy convenience script
