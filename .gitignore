@@ -43,3 +43,7 @@ Thumbs.db
 
 # Environment variables
 .env
+
+# Example script outputs
+anndata_quickstart.png
+anndata_quickstart.h5ad

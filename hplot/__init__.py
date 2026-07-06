@@ -37,4 +37,15 @@ __all__ = [
     "binarize",
     "cluster_mass_screen",
     "compute_layer_kruskal_pvalues",
+    "pp",
+    "tl",
+    "pl",
+    "io",
+    "gr",
 ]
+
+# scanpy-style AnnData API (pp/tl/pl) plus a CSV bridge (io). These submodules
+# import anndata lazily *inside* their functions, so importing hplot (or
+# hplot.core) still works without anndata installed. ``gr`` is a squidpy-style
+# alias: hplot.gr.border_layers is hplot.pp.border_layers.
+from . import pp, tl, pl, io, gr  # noqa: E402

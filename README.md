@@ -9,6 +9,18 @@ at tissue boundaries**
 a Kaplan–Meier-style curve family that shows how tissue composition changes with
 signed distance from a tissue boundary (e.g. the tumour–stroma interface).
 
+> **Two ways to use hplot — pick one:**
+>
+> - **You have an `AnnData`** (scanpy/squidpy user) → jump to
+>   [AnnData interface](#anndata-interface-scanpy--squidpy-users). hplot assigns
+>   border layers and fits the curve directly on `adata`, no manual table needed.
+> - **You have a tidy table / CSV** (one row per case × layer) → use the
+>   [`HPlot` engine and CLI](#conceptual-background) documented below. This is
+>   also the reproducibility path for the paper.
+>
+> Both share the same statistics and plotting core; the AnnData layer is a thin
+> adapter on top of it.
+
 The analysis is structured in **three stages** with increasing specificity:
 
 | Stage | What | Function / CLI |
@@ -27,12 +39,207 @@ pip install -e .
 
 **Hard dependencies:** `pandas`, `numpy`, `scipy`, `matplotlib`, **`pygam`**
 
+**Optional extras** — only needed for the AnnData / scanpy / squidpy interface
+(§ *AnnData interface* below). The core engine and CLI work without them:
+
+```bash
+pip install -e ".[anndata]"    # adds anndata (>=0.8)
+pip install -e ".[squidpy]"    # adds anndata + squidpy (>=1.2) for spatial graphs
+```
+
 ```bash
 # Docker (for paper reproducibility — no local Python setup needed)
 docker build -t hplot .
 docker run --rm -v "$PWD":/data hplot test -i /data/data.csv \
     --target immune_fraction --group hpv_status --permutations 999
 ```
+
+---
+
+## AnnData interface (scanpy / squidpy users)
+
+If your data already lives in an `AnnData`, you do **not** need to build a tidy
+DataFrame by hand. `hplot` ships a scanpy-style API that mirrors the
+`pp` → `tl` → `pl` workflow you already know from `scanpy`/`squidpy`, so the
+learning curve is essentially zero:
+
+```python
+import scanpy as sc
+import squidpy as sq
+import hplot
+
+# 0) (optional) build a spatial neighbour graph the squidpy way
+sq.gr.spatial_neighbors(adata)                 # -> adata.obsp["spatial_connectivities"]
+
+# 1) pp: assign every cell a signed border layer + micron distance
+hplot.pp.border_layers(adata, cluster_key="cell_type", base_categories=["tumour"],
+                       sample_key="sample_id")
+#    -> adata.obs["hplot_layer"], adata.obs["hplot_distance_um"]
+
+# 2) tl: fit the H-Plot and stash the result in adata.uns
+hplot.tl.hplot(adata, target="CD8A", groupby="cell_subtype",
+               value_kind="expression", sample_key="sample_id")
+#    -> adata.uns["hplot"]  (h5ad-safe; survives adata.write_h5ad)
+
+# 3) pl: draw it (returns a matplotlib Axes)
+hplot.pl.hplot(adata)
+```
+
+### Namespace mapping
+
+| hplot call | scanpy analogue | squidpy analogue | writes |
+|------------|-----------------|------------------|--------|
+| `hplot.pp.border_layers` | `sc.pp.neighbors` | `sq.gr.spatial_neighbors` | `.obs` + `.uns["hplot_border"]` |
+| `hplot.gr.border_layers` | — | `sq.gr.*` | *(alias of `pp.border_layers` — same function)* |
+| `hplot.tl.hplot` | `sc.tl.umap` | `sq.tl.var_by_distance` | `.uns["hplot"]` |
+| `hplot.pl.hplot` | `sc.pl.umap` | `sq.pl.var_by_distance` | *(draws)* |
+
+`border_layers` is reachable under **both** `pp` (scanpy idiom: "preprocess my
+cells") and `gr` (squidpy idiom: "graph op") — they are the *same* function
+object. The fit/plot live in `tl`/`pl` under both conventions, matching
+squidpy's own `var_by_distance`.
+
+> **Runnable example:** [`examples/anndata_quickstart.py`](examples/anndata_quickstart.py)
+> is a self-contained script that builds a synthetic 2-sample `AnnData`, runs the
+> full `pp` → `tl` → `pl` workflow, saves a two-panel figure, and demonstrates
+> the `write_h5ad` round-trip — no real data or squidpy graph required. Run it
+> with `python examples/anndata_quickstart.py`.
+
+### `pp.border_layers` — graph source (both, with fallback)
+
+The border layer of a cell is its signed shortest-hop distance to the
+tumour/base boundary over a **spatial neighbour graph**. That graph is obtained
+as follows:
+
+1. **Reuse** `adata.obsp[connectivity_key]` (default `"spatial_connectivities"`)
+   if it exists — i.e. whatever `sq.gr.spatial_neighbors` produced.
+2. **Fallback**: otherwise build a Delaunay graph from
+   `adata.obsm[spatial_key]` (default `"spatial"`), pruned at `max_edge` µm.
+3. If no graph exists **and** `build_graph_if_missing=False`, raise instead of
+   guessing.
+
+With `sample_key` set, the graph is sliced per sample so hops never cross
+tissues. The source actually used is recorded in
+`adata.uns["hplot_border"]["graph_source"]` (`"precomputed"` or `"delaunay"`).
+
+### `tl.hplot` — what gets profiled
+
+| `value_kind` | `target` is | one curve per | y-axis |
+|--------------|-------------|---------------|--------|
+| `"expression"` (default) | a `var_name` (gene in `.X`) | `groupby` category (or all cells) | mean expression |
+| `"proportion"` | an `.obs` categorical column | each category of `target` | cell-type fraction |
+
+`sample_key` marks the unit of replication: per-layer curves are averaged
+across samples, so the confidence band reflects between-sample variability
+(single-sample data gives the raw per-layer curve with a degenerate band).
+Pass `zscore=True` to z-score a gene per sample before aggregating.
+
+### `adata.uns["hplot"]` layout
+
+The result is stored as a flat, **h5ad-safe** dict — no cell-type label is ever
+used as a dict key, so labels containing `/` (e.g. `"T/NK cells"`) round-trip
+through `write_h5ad` cleanly:
+
+```text
+adata.uns["hplot"] = {
+    "stats":        {group_index, layer, distance, mean, ci_lower, ci_upper, n},  # flat arrays
+    "group_order":  [labels...],          # group_index -> label
+    "colors":       [hex per group],      # "" when unset
+    "unit", "value_kind", "display_base_type", "display_target_type",
+    "target", "legend_title",
+}
+```
+
+`hplot.pl.hplot(adata, key="hplot", ...)` reconstructs the per-group curves from
+this and forwards any extra keyword to `plot_hplot` (e.g. `ci_show=False`).
+
+### CSV bridge (no AnnData needed)
+
+To re-plot a saved `hplot-outputs.csv` without any AnnData:
+
+```python
+import hplot
+hplot.pl.hplot_from_csv("hplot-outputs.csv")           # returns an Axes
+stats = hplot.io.read_hplot_csv("hplot-outputs.csv")   # -> {group: DataFrame}
+```
+
+Column names are auto-detected (case-insensitive): `layer`, `distance`/
+`distance_um`, `mean`/`target_type_prop`/`value`, optional `ci_lower`/`ci_upper`
+and `n`/`all_count`. Pass `group_col=` to split one file into multiple curves.
+
+### `pp.border_layers()` parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `adata` | — | The `AnnData` (modified in place unless `copy=True`). |
+| `cluster_key` | — | `.obs` column with cell compartments. |
+| `base_categories` | — | Value(s) of `cluster_key` forming the base/tumour region (str or list). |
+| `spatial_key` | `"spatial"` | `.obsm` key with cell coordinates (µm). |
+| `connectivity_key` | `"spatial_connectivities"` | `.obsp` key of a precomputed graph to reuse (squidpy). |
+| `sample_key` | `None` | `.obs` column of independent tissues; graph is computed per sample. |
+| `k` | `2` | Neighbourhood radius (hops) used to call the base *region*. |
+| `n_min` | `10` | Minimum k-hop neighbourhood size for a cell to seed a region. |
+| `ratio` | `0.2` | Minimum base fraction within the neighbourhood to be "region". |
+| `max_edge` | `25.0` | Delaunay edge-length cap (µm); ignored when a graph is reused. |
+| `build_graph_if_missing` | `True` | Build Delaunay when no `.obsp` graph exists; else raise. |
+| `layer_key` / `distance_key` | `"hplot_layer"` / `"hplot_distance_um"` | `.obs` columns written. |
+| `copy` | `False` | Return a modified copy instead of writing in place. |
+
+Writes `.obs[layer_key]` (signed hops, NaN where unreachable),
+`.obs[distance_key]` (signed µm), and `.uns["hplot_border"]` (run parameters +
+`graph_source`).
+
+### `tl.hplot()` parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `adata` | — | Must already carry `layer_key` from `pp.border_layers`. |
+| `target` | — | A `var_name` (gene) for expression; an `.obs` column for proportion. |
+| `value_kind` | `"expression"` | `"expression"` / `"interaction"` (gene in `.X`) or `"proportion"` / `"fraction"` (`.obs` category). |
+| `groupby` | `None` | `.obs` column → one curve per category (expression modes). |
+| `sample_key` | `None` | Replicate column; curves averaged across samples per layer. |
+| `zscore` | `False` | Z-score the gene per sample before aggregating (expression modes). |
+| `smoother` | `"mean"` | `"mean"` (per-layer average) or `"gam"` (penalised smooth). |
+| `layer_key` / `distance_key` | `"hplot_layer"` / `"hplot_distance_um"` | `.obs` columns read. |
+| `color_map` | `None` | `{group: colour}`; stored as hex, reused at plot time. |
+| `display_base_type` / `display_target_type` | `"tumour border"` / `target` | Title / y-axis phrasing. |
+| `legend_title` | auto | Legend heading (defaults to `target` or `groupby`). |
+| `key_added` | `"hplot"` | `.uns` key to write the serialised result to. |
+| `copy` | `False` | Operate on and return a copy. |
+
+Extra keyword arguments are forwarded to `HPlot.fit()`.
+
+### `pl.hplot()` / `pl.hplot_from_csv()` parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `adata` / `path` | — | Source: the `AnnData` (reads `.uns[key]`) or a CSV path. |
+| `key` | `"hplot"` | (`pl.hplot`) `.uns` key produced by `tl.hplot`. |
+| `group_col` | `None` | (`hplot_from_csv`) column that splits the CSV into curves. |
+| `ax` | `None` | Existing axis to draw into; a new one is created if omitted. |
+| `ci_show` | `True` | Draw the confidence band. |
+| `unit` / `value_kind` / `display_*` | from `.uns` (or args for CSV) | Override stored plot settings. |
+
+Both return a matplotlib `Axes`. Any extra keyword is forwarded to
+`plot_hplot()` (e.g. `pvalue_show`, `band`, `legend_kwargs`).
+
+### AnnData troubleshooting
+
+| Symptom | Likely cause / fix |
+|---------|--------------------|
+| `ImportError: ... pip install 'hplot[anndata]'` | The AnnData API needs the optional extra: `pip install "hplot[anndata]"`. |
+| All `hplot_layer` are NaN | No base cells matched — check `cluster_key` values and `base_categories` spelling/case. |
+| Only NaN for one sample + a warning | That sample had `< 4` cells or a degenerate (collinear) layout; other samples are fine. |
+| Border sits in the wrong place | Tune `n_min` / `ratio` (region call) and `max_edge` (Delaunay pruning), or supply a squidpy graph via `sq.gr.spatial_neighbors`. |
+| Layers cross between tissues | Pass `sample_key=` so the graph is computed per sample. |
+| `KeyError: adata.obs['hplot_layer'] missing` | Run `pp.border_layers` before `tl.hplot`. |
+| `write_h5ad` fails on `.uns` | Use `tl.hplot` to populate `.uns["hplot"]` (it is h5ad-safe); don't stash raw `HPlot` objects there. |
+| Wrong quantity plotted | `value_kind="expression"` needs a gene in `.X`; `value_kind="proportion"` needs an `.obs` categorical column. |
+
+> The `pp`/`tl`/`pl`/`gr` modules import `anndata` **lazily** (inside the
+> functions), so `import hplot` and `import hplot.core` still work with only the
+> hard dependencies installed. You only need `pip install "hplot[anndata]"` when
+> you actually call this interface.
 
 ---
 
@@ -519,6 +726,14 @@ hplot/
                  gam_group_curves(), gam_delta_curve(), gam_pooled_effect()
   runners.py   — run_hplot_batch() batch helper
   cli.py       — argparse CLI (hplot plot / test / gam)
+  pp.py        — AnnData preprocessing: border_layers() (also exposed as gr.py)
+  gr.py        — squidpy-style alias namespace (gr.border_layers is pp.border_layers)
+  tl.py        — AnnData tool: hplot() fit -> adata.uns["hplot"]
+  pl.py        — AnnData plotting: hplot(), hplot_from_csv()
+  io.py        — read_hplot_csv() CSV bridge
+  _geometry.py — pure numpy/scipy border-layer geometry (Delaunay, k-hop, BFS)
+  _anndata.py  — lazy anndata guard + adata -> tidy-DataFrame extraction
+  _serial.py   — h5ad-safe (de)serialisation of a fitted HPlot
 run_hplot.py   — legacy convenience script
 Dockerfile     — analysis container for paper reproducibility
 ```

@@ -39,6 +39,13 @@ confidence intervals capture across-case variability.
 | scipy      | ≥ 1.6    | Confidence interval stats   |
 | numpy      | ≥ 1.18   | Numerical computation       |
 
+Optional extras (only for the AnnData / scanpy / squidpy interface, § 5.x):
+
+| Extra              | Adds                       | Install                        |
+| ------------------ | -------------------------- | ------------------------------ |
+| `hplot[anndata]`   | `anndata` ≥ 0.8            | `pip install "hplot[anndata]"` |
+| `hplot[squidpy]`   | `anndata` + `squidpy` ≥1.2 | `pip install "hplot[squidpy]"` |
+
 ### 2.2 Editable Install (Recommended)
 
 ```bash
@@ -249,6 +256,39 @@ run_hplot_batch(
 
 This writes one file per unique value in the `group` column to the `output`
 directory.
+
+### 5.x AnnData interface (scanpy / squidpy)
+
+When the input is an `AnnData` rather than a tidy CSV, use the scanpy-style
+`pp`/`tl`/`pl` API (requires `pip install "hplot[anndata]"`, or
+`"hplot[squidpy]"` for spatial graphs):
+
+```python
+import hplot
+
+# 1) assign a signed border layer to every cell (Delaunay fallback if no graph)
+hplot.pp.border_layers(adata, cluster_key="cell_type",
+                       base_categories=["tumour"], sample_key="sample_id")
+
+# 2) fit and stash the H-Plot in adata.uns["hplot"] (survives write_h5ad)
+hplot.tl.hplot(adata, target="CD8A", groupby="cell_subtype",
+               value_kind="expression", sample_key="sample_id")
+
+# 3) draw (returns a matplotlib Axes)
+hplot.pl.hplot(adata)
+```
+
+Notes:
+- `hplot.gr.border_layers` is a squidpy-style alias of `hplot.pp.border_layers`.
+- `pp.border_layers` reuses `adata.obsp["spatial_connectivities"]` if present
+  (e.g. from `sq.gr.spatial_neighbors`), else builds a Delaunay graph from
+  `adata.obsm["spatial"]`.
+- `value_kind="proportion"` profiles a cell-type fraction from an `.obs`
+  categorical `target`; `value_kind="expression"` profiles a gene from `.X`.
+- Re-plot a saved CSV with no AnnData:
+  `hplot.pl.hplot_from_csv("hplot-outputs.csv")`.
+- These modules import `anndata` lazily, so `import hplot` still works without
+  the extra installed.
 
 ---
 

@@ -20,6 +20,10 @@ dependencies = [
   "pygam>=0.9"
 ]
 
+[project.optional-dependencies]
+anndata = ["anndata>=0.8"]
+squidpy = ["anndata>=0.8", "squidpy>=1.2"]
+
 [project.scripts]
 hplot = "hplot.cli:main"
 
