@@ -47,3 +47,6 @@ Thumbs.db
 # Example script outputs
 anndata_quickstart.png
 anndata_quickstart.h5ad
+
+# Sphinx build output
+docs/_build/

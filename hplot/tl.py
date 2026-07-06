@@ -1,7 +1,7 @@
 """Tools: fit an H-Plot from AnnData and stash the result in ``adata.uns``.
 
 Mirrors ``scanpy.tl``: read from ``adata``, run the method, write results back
-to ``adata`` (here ``adata.uns['hplot']`` as an h5ad-safe dict).
+to ``adata`` (here ``adata.uns['hplot']`` as an h5ad-safe dict)::
 
     hplot.pp.border_layers(adata, "cell_type", ["tumour"])
     hplot.tl.hplot(adata, target="CD8A", groupby="cell_subtype",
