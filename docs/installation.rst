@@ -22,7 +22,7 @@ The core engine and CLI work without them:
    pip install -e ".[squidpy]"    # adds anndata + squidpy (>=1.2)
    pip install -e ".[docs]"       # tooling to build this documentation
 
-Because ``pp`` / ``tl`` / ``pl`` / ``gr`` import ``anndata`` lazily (inside the
+Because ``pp`` / ``tl`` / ``pl`` import ``anndata`` lazily (inside the
 functions), ``import hplot`` and ``import hplot.core`` still work with only the
 hard dependencies installed. You only need ``hplot[anndata]`` when you actually
 call that interface.

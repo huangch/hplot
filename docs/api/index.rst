@@ -10,9 +10,6 @@ AnnData interface
 .. automodule:: hplot.pp
    :members:
 
-.. automodule:: hplot.gr
-   :members:
-
 .. automodule:: hplot.tl
    :members:
 

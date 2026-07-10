@@ -1,4 +1,4 @@
-"""Tests for the AnnData / scanpy / squidpy interface (pp / tl / pl / gr / io).
+"""Tests for the AnnData / scanpy / squidpy interface (pp / tl / pl / io).
 
 Skipped automatically when ``anndata`` is not installed, so the core test suite
 still runs with only the hard dependencies present.
@@ -75,9 +75,8 @@ def test_core_imports_without_anndata_reference():
         assert "import squidpy" not in text
 
 
-def test_gr_is_pp_alias():
-    assert hplot.gr.border_layers is hplot.pp.border_layers
-    for ns in ("pp", "tl", "pl", "gr", "io"):
+def test_namespaces_present():
+    for ns in ("pp", "tl", "pl", "io"):
         assert hasattr(hplot, ns)
 
 
@@ -149,6 +148,51 @@ def test_tl_proportion_groups(adata):
 def test_tl_requires_border_layers(adata):
     with pytest.raises(KeyError):
         hplot.tl.hplot(adata, target="RINGGENE")
+
+
+def test_add_base_excluded_proportion_arithmetic():
+    from hplot.runners import add_base_excluded_proportion
+    df = pd.DataFrame({
+        "target_count": [10, 20],
+        "base_count": [40, 50],
+        "all_count": [100, 100],
+        "layer": [0, 1],
+    })
+    out, col = add_base_excluded_proportion(df)
+    assert col == "target_prop_base_excluded"
+    # target / (all - base)
+    assert out[col].tolist() == pytest.approx([10 / 60, 20 / 50])
+
+
+def test_add_base_excluded_proportion_min_count_nan():
+    from hplot.runners import add_base_excluded_proportion
+    df = pd.DataFrame({
+        "target_count": [5, 3],
+        "base_count": [99, 10],
+        "all_count": [100, 100],
+    })
+    out, col = add_base_excluded_proportion(df, min_base_excluded_count=5)
+    # row 0: all - base = 1 < 5  -> NaN ; row 1: 90 >= 5 -> 3/90
+    assert np.isnan(out[col].iloc[0])
+    assert out[col].iloc[1] == pytest.approx(3 / 90)
+
+
+def test_tl_proportion_exclude_base(adata):
+    hplot.pp.border_layers(adata, "cell_type", ["tumour"], sample_key="sample")
+    hplot.tl.hplot(adata, target="cell_type", value_kind="proportion",
+                   sample_key="sample", exclude_base=True,
+                   key_added="hplot_excl")
+    groups = list(np.asarray(adata.uns["hplot_excl"]["group_order"]).tolist())
+    # the base category (tumour) is dropped once excluded from the denominator
+    assert "tumour" not in groups
+    assert "stroma" in groups
+
+
+def test_tl_exclude_base_without_border_raises(adata):
+    adata.obs["hplot_layer"] = 0.0     # satisfy the layer_key check only
+    with pytest.raises(KeyError):
+        hplot.tl.hplot(adata, target="cell_type", value_kind="proportion",
+                       sample_key="sample", exclude_base=True)
 
 
 # --------------------------------------------------------------------------- #

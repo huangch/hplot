@@ -38,9 +38,6 @@ def border_layers(
 ):
     """Assign a signed border layer + micron distance to every cell.
 
-    Also available as :func:`hplot.gr.border_layers` (squidpy-style alias) —
-    both names refer to the same function.
-
     Graph source (both, with fallback): if ``adata.obsp[connectivity_key]``
     exists it is used as the spatial graph; otherwise a Delaunay graph is built
     from ``adata.obsm[spatial_key]`` (pruned at ``max_edge``) when

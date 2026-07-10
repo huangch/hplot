@@ -38,15 +38,12 @@ Namespace mapping
 hplot call                    scanpy analogue         squidpy analogue           writes
 ============================  ======================  =========================  ==================================
 ``hplot.pp.border_layers``    ``sc.pp.neighbors``     ``sq.gr.spatial_neighbors`` ``.obs`` + ``.uns["hplot_border"]``
-``hplot.gr.border_layers``    —                       ``sq.gr.*``                *(alias — same function)*
 ``hplot.tl.hplot``            ``sc.tl.umap``          ``sq.tl.var_by_distance``   ``.uns["hplot"]``
 ``hplot.pl.hplot``            ``sc.pl.umap``          ``sq.pl.var_by_distance``   *(draws)*
 ============================  ======================  =========================  ==================================
 
-``border_layers`` is reachable under **both** ``pp`` (scanpy idiom) and ``gr``
-(squidpy idiom) — they are the *same* function object. The fit/plot live in
-``tl`` / ``pl`` under both conventions, matching squidpy's own
-``var_by_distance``.
+``border_layers`` lives under ``pp`` (scanpy idiom); the fit/plot live in
+``tl`` / ``pl``, matching squidpy's own ``var_by_distance``.
 
 Graph source (both, with fallback)
 ----------------------------------

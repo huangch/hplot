@@ -90,14 +90,11 @@ hplot.pl.hplot(adata)
 | hplot call | scanpy analogue | squidpy analogue | writes |
 |------------|-----------------|------------------|--------|
 | `hplot.pp.border_layers` | `sc.pp.neighbors` | `sq.gr.spatial_neighbors` | `.obs` + `.uns["hplot_border"]` |
-| `hplot.gr.border_layers` | — | `sq.gr.*` | *(alias of `pp.border_layers` — same function)* |
 | `hplot.tl.hplot` | `sc.tl.umap` | `sq.tl.var_by_distance` | `.uns["hplot"]` |
 | `hplot.pl.hplot` | `sc.pl.umap` | `sq.pl.var_by_distance` | *(draws)* |
 
-`border_layers` is reachable under **both** `pp` (scanpy idiom: "preprocess my
-cells") and `gr` (squidpy idiom: "graph op") — they are the *same* function
-object. The fit/plot live in `tl`/`pl` under both conventions, matching
-squidpy's own `var_by_distance`.
+`border_layers` lives under `pp` (scanpy idiom: "preprocess my cells"). The
+fit/plot live in `tl`/`pl`, matching squidpy's own `var_by_distance`.
 
 > **Runnable example:** [`examples/anndata_quickstart.py`](examples/anndata_quickstart.py)
 > is a self-contained script that builds a synthetic 2-sample `AnnData`, runs the
@@ -198,6 +195,8 @@ Writes `.obs[layer_key]` (signed hops, NaN where unreachable),
 | `value_kind` | `"expression"` | `"expression"` / `"interaction"` (gene in `.X`) or `"proportion"` / `"fraction"` (`.obs` category). |
 | `groupby` | `None` | `.obs` column → one curve per category (expression modes). |
 | `sample_key` | `None` | Replicate column; curves averaged across samples per layer. |
+| `exclude_base` | `False` | Proportion modes only: divide the target count by **non-base** cells (`all − base`) instead of all cells, using the `cluster_key`/`base_categories` recorded by `pp.border_layers`. Base categories are dropped from the curve set. |
+| `min_base_excluded_count` | `1` | With `exclude_base`, layers with fewer non-base cells yield `NaN`. |
 | `zscore` | `False` | Z-score the gene per sample before aggregating (expression modes). |
 | `smoother` | `"mean"` | `"mean"` (per-layer average) or `"gam"` (penalised smooth). |
 | `layer_key` / `distance_key` | `"hplot_layer"` / `"hplot_distance_um"` | `.obs` columns read. |
@@ -689,30 +688,42 @@ plot_hplot(
 hplot plot -i data.csv --targets immune_fraction [--group hpv_status]
            [--layer layer] [--distance distance] [-u um]
            [-o out/] [-f svg|pdf|png] [--dpi 300] [--ci]
+           [--exclude-base] [--min-base-excluded-count 1]
 ```
+
+`--exclude-base` derives the target curve from count columns as
+`target_count / (all_count − base_count)` (accepts `*_type_count` / `n_cells`
+aliases) instead of using a precomputed proportion, so the fraction is taken
+among non-base (e.g. non-tumour) cells only. `--min-base-excluded-count` drops
+layers with too few non-base cells (`NaN`).
 
 ### `hplot test`
 
 ```
-hplot test -i data.csv --target immune_fraction --group hpv_status
+hplot test -i data.csv [--target immune_fraction] --group hpv_status
            [--groups "HPV-" "HPV+"] [--test mannwhitney|ttest|welch]
            [--correction fdr_bh|bonferroni] [--min-n 3]
            [--permutations 999] [--threshold 0.05] [--seed 42]
+           [--exclude-base] [--min-base-excluded-count 1]
            [-o pvalues.csv]
 ```
 
 Outputs: per-layer p-value table (CSV) + cluster-mass permutation result.
+`--target` is required unless `--exclude-base` supplies the numerator/denominator
+from count columns.
 
 ### `hplot gam`
 
 ```
-hplot gam -i data.csv --target immune_fraction --group hpv_status
+hplot gam -i data.csv [--target immune_fraction] --group hpv_status
           [--groups "HPV-" "HPV+"] --at-layer 0
           [--covariates AGE late_stage is_female]
           [--n-splines 10] [--curves-output gam_curves.csv]
+          [--exclude-base] [--min-base-excluded-count 1]
 ```
 
 Outputs: effect size (Δ), Wald p-value, n; optionally per-group curve CSV.
+`--target` is required unless `--exclude-base` is given.
 
 ---
 
@@ -726,8 +737,7 @@ hplot/
                  gam_group_curves(), gam_delta_curve(), gam_pooled_effect()
   runners.py   — run_hplot_batch() batch helper
   cli.py       — argparse CLI (hplot plot / test / gam)
-  pp.py        — AnnData preprocessing: border_layers() (also exposed as gr.py)
-  gr.py        — squidpy-style alias namespace (gr.border_layers is pp.border_layers)
+  pp.py        — AnnData preprocessing: border_layers()
   tl.py        — AnnData tool: hplot() fit -> adata.uns["hplot"]
   pl.py        — AnnData plotting: hplot(), hplot_from_csv()
   io.py        — read_hplot_csv() CSV bridge

@@ -49,6 +49,8 @@ def _cmd_plot(args):
         ci_show=args.ci,
         format=args.format,
         dpi=args.dpi,
+        exclude_base=args.exclude_base,
+        min_base_excluded_count=args.min_base_excluded_count,
     )
     print(f"[hplot plot]  figures written to {args.output}/")
 
@@ -72,6 +74,13 @@ def _add_plot_parser(sub):
                    choices=["svg", "pdf", "png"],    help="Output image format.")
     p.add_argument("--dpi", type=int, default=300,   help="DPI for PNG output.")
     p.add_argument("--ci", action="store_true",      help="Show confidence interval bands.")
+    p.add_argument("--exclude-base", dest="exclude_base", action="store_true",
+                   help="Exclude base cells from the denominator: "
+                        "target_count / (all_count - base_count).")
+    p.add_argument("--min-base-excluded-count", dest="min_base_excluded_count",
+                   type=int, default=1,
+                   help="Drop layers where all_count - base_count < this "
+                        "(only with --exclude-base; default 1).")
     p.set_defaults(func=_cmd_plot)
 
 
@@ -80,9 +89,17 @@ def _add_plot_parser(sub):
 def _cmd_test(args):
     from hplot.stats import compute_layer_pvalues
     df = pd.read_csv(args.input)
+    target = args.target
+    if args.exclude_base:
+        from hplot.runners import add_base_excluded_proportion
+        df, target = add_base_excluded_proportion(
+            df, min_base_excluded_count=args.min_base_excluded_count)
+    elif target is None:
+        raise SystemExit(
+            "hplot test: --target is required unless --exclude-base is given.")
     pvals = compute_layer_pvalues(
         df,
-        prop=args.target,
+        prop=target,
         layer_col=args.layer,
         group_col=args.group,
         groups=tuple(args.groups) if args.groups else None,
@@ -98,10 +115,10 @@ def _cmd_test(args):
         print(pvals.to_string(index=False))
 
     if args.permutations > 0:
-        _cluster_mass_summary(df, pvals, args)
+        _cluster_mass_summary(df, pvals, args, target)
 
 
-def _cluster_mass_summary(df, pvals, args):
+def _cluster_mass_summary(df, pvals, args, target):
     from hplot.stats import compute_layer_pvalues
     col = "p_adj" if args.correction else "p_value"
     sig = pvals[pvals[col] < args.threshold]
@@ -119,7 +136,7 @@ def _cluster_mass_summary(df, pvals, args):
         df_perm[args.group] = g_vals
         try:
             pv_perm = compute_layer_pvalues(
-                df_perm, prop=args.target, layer_col=args.layer,
+                df_perm, prop=target, layer_col=args.layer,
                 group_col=args.group,
                 groups=tuple(args.groups) if args.groups else None,
                 test=args.test, distance_col=args.distance,
@@ -146,7 +163,8 @@ def _add_test_parser(sub):
         ),
     )
     p.add_argument("-i", "--input",   required=True, help="Input CSV file.")
-    p.add_argument("--target",        required=True, help="Target proportion column.")
+    p.add_argument("--target",        default=None,
+                   help="Target proportion column (required unless --exclude-base).")
     p.add_argument("--layer",         default="layer", help="Layer index column.")
     p.add_argument("--group",         required=True,   help="Group label column.")
     p.add_argument("--groups", nargs=2, default=None, metavar=("LOW", "HIGH"),
@@ -165,6 +183,13 @@ def _add_test_parser(sub):
     p.add_argument("--threshold",     type=float, default=0.05,
                    help="Per-layer significance threshold for cluster-mass.")
     p.add_argument("--seed",          type=int, default=42, help="Random seed.")
+    p.add_argument("--exclude-base", dest="exclude_base", action="store_true",
+                   help="Derive the target from counts as "
+                        "target_count / (all_count - base_count) before testing.")
+    p.add_argument("--min-base-excluded-count", dest="min_base_excluded_count",
+                   type=int, default=1,
+                   help="Drop layers where all_count - base_count < this "
+                        "(only with --exclude-base; default 1).")
     p.add_argument("-o", "--output",  default=None,
                    help="Output CSV path for p-value table (stdout if omitted).")
     p.set_defaults(func=_cmd_test)
@@ -175,10 +200,18 @@ def _add_test_parser(sub):
 def _cmd_gam(args):
     from hplot.stats import gam_pooled_effect, gam_group_curves
     df = pd.read_csv(args.input)
+    target = args.target
+    if args.exclude_base:
+        from hplot.runners import add_base_excluded_proportion
+        df, target = add_base_excluded_proportion(
+            df, min_base_excluded_count=args.min_base_excluded_count)
+    elif target is None:
+        raise SystemExit(
+            "hplot gam: --target is required unless --exclude-base is given.")
     covariates = args.covariates or None
     effect, pval, n = gam_pooled_effect(
         long_df=df,
-        target_col=args.target,
+        target_col=target,
         layer_col=args.layer,
         group_col=args.group,
         at_layer=args.at_layer,
@@ -187,7 +220,7 @@ def _cmd_gam(args):
         n_splines=args.n_splines,
     )
     cov_str = ", ".join(covariates) if covariates else "none"
-    print(f"[hplot gam]  target={args.target}  group={args.group}  "
+    print(f"[hplot gam]  target={target}  group={args.group}  "
           f"at_layer={args.at_layer}")
     print(f"             covariates  : [{cov_str}]")
     print(f"             effect (high - low) = {effect:+.4f}")
@@ -196,7 +229,7 @@ def _cmd_gam(args):
         grid = np.arange(df[args.layer].min(), df[args.layer].max() + 1)
         curves = gam_group_curves(
             long_df=df,
-            target_col=args.target,
+            target_col=target,
             layer_col=args.layer,
             group_col=args.group,
             grid=grid,
@@ -224,7 +257,8 @@ def _add_gam_parser(sub):
         ),
     )
     p.add_argument("-i", "--input",  required=True, help="Input CSV file.")
-    p.add_argument("--target",       required=True, help="Response column.")
+    p.add_argument("--target",       default=None,
+                   help="Response column (required unless --exclude-base).")
     p.add_argument("--layer",        default="layer", help="Layer index column.")
     p.add_argument("--group",        required=True,   help="Group label column.")
     p.add_argument("--groups", nargs=2, default=None, metavar=("LOW", "HIGH"),
@@ -235,6 +269,13 @@ def _add_gam_parser(sub):
                    help="Columns to include as linear confounders.")
     p.add_argument("--n-splines", dest="n_splines", type=int, default=10,
                    help="Number of B-spline basis functions (default 10).")
+    p.add_argument("--exclude-base", dest="exclude_base", action="store_true",
+                   help="Derive the response from counts as "
+                        "target_count / (all_count - base_count) before fitting.")
+    p.add_argument("--min-base-excluded-count", dest="min_base_excluded_count",
+                   type=int, default=1,
+                   help="Drop layers where all_count - base_count < this "
+                        "(only with --exclude-base; default 1).")
     p.add_argument("--curves-output", dest="curves_output", default=None,
                    help="CSV path to save per-group GAM predictions + 95%% CI.")
     p.set_defaults(func=_cmd_gam)

@@ -489,7 +489,7 @@ def plot_hplot_gam(
     legend_fontsize=8,
     legend_loc="upper left",
 ):
-    """Draw a GAM-smoothed H-plot (H-Plot-GAM) panel from per-group smooths.
+    """Draw a GAM-smoothed H-plot (**H-GAM Plot**) panel from per-group smooths.
 
     Renders the penalised-spline smooth of each group with its pointwise CI
     band, i.e. the top panel that pairs with :func:`plot_delta_hplot_gam`. This
@@ -618,8 +618,12 @@ def plot_delta_hplot_gam(
     show_sig_pct=True,
     show_legend=True,
     legend_fontsize=6,
+    boundary_line=True,
+    boundary_line_color="black",
+    boundary_line_width=1.0,
+    boundary_line_alpha=0.5,
 ):
-    """Draw a differential H-plot-GAM (:math:`\\Delta`H-Plot-GAM) panel.
+    """Draw a differential H-GAM (**H-ΔGAM Plot**) panel.
 
     Renders the layer-wise difference curve
     :math:`\\Delta(L) = f_{high}(L) - f_{low}(L)` produced by
@@ -628,7 +632,7 @@ def plot_delta_hplot_gam(
     (``sig_pos``) and ``low_color`` where the low group is pointwise larger
     (``sig_neg``), grey elsewhere, with a zero reference line.
 
-    This is the companion of the H-Plot-GAM top panel (the per-group smooths,
+    This is the companion of the H-GAM Plot top panel (the per-group smooths,
     drawn by :func:`plot_hplot` with ``smoother='gam'`` / ``gam_curves=``).
 
     .. warning::
@@ -678,6 +682,13 @@ def plot_delta_hplot_gam(
         Draw a legend when any region is significant.
     legend_fontsize : float
         Font size for the legend.
+    boundary_line : bool
+        Draw a dashed **vertical** reference at layer 0 (the boundary),
+        mirroring the ``zero_line`` of the H-GAM Plot top panel so the two
+        panels align at the boundary. This is distinct from the horizontal
+        :math:`\Delta = 0` line, which is always drawn. Default ``True``.
+    boundary_line_color, boundary_line_width, boundary_line_alpha : str, float, float
+        Styling of the vertical boundary line.
 
     Returns
     -------
@@ -706,6 +717,11 @@ def plot_delta_hplot_gam(
     )
     ax.plot(grid, diff_pred, color=line_color, lw=1.5)
     ax.axhline(0, color="black", lw=0.8, ls="--", alpha=0.6)
+    if boundary_line:
+        ax.axvline(
+            0, color=boundary_line_color, lw=boundary_line_width,
+            ls="--", alpha=boundary_line_alpha,
+        )
 
     if ref_band is not None:
         ax.axvspan(
@@ -790,4 +806,358 @@ def plot_hplotx(grouped_stats, unit=None, ci_show=True, ax=None, display_base_ty
     ax.xaxis.set_major_locator(MaxNLocator(integer=True))
 
     return ax
+
+
+def _hloci_up_mask(directions):
+    """Coerce a per-row direction spec into a boolean ``is_up`` mask.
+
+    Accepts a boolean array (``True`` = up), a numeric array (``> 0`` = up), or
+    a string array (tokens such as ``"elevated"``/``"up"``/``"high"``/``"+"``
+    are up; everything else is down).
+    """
+    arr = np.asarray(directions)
+    if arr.dtype == bool:
+        return arr
+    if np.issubdtype(arr.dtype, np.number):
+        return arr > 0
+    up_tokens = {"elevated", "up", "high", "pos", "positive", "+", "1", "true"}
+    return np.array([str(v).strip().lower() in up_tokens for v in arr], dtype=bool)
+
+
+def plot_hloci_summary(
+    positions,
+    directions,
+    *,
+    weights=None,
+    labels=None,
+    ax=None,
+    strip_color="k",
+    lw_range=(1.0, 12.0),
+    default_lw=2.0,
+    half_height=0.30,
+    marker_size=6.0,
+    gap_pt=0.9,
+    up_marker="^",
+    down_marker="v",
+    marker_edge_width=0.4,
+    zero_line=True,
+    zero_line_color="0.45",
+    zero_line_width=0.9,
+    grid_axis="x",
+    xlabel="signed cluster mass",
+    ylabel=None,
+    title=None,
+    title_fontsize=None,
+):
+    """Draw an **H-Loci Summary**: a location-of-the-border-band panel.
+
+    Each row is one feature's **H-Locus** — its cluster-mass profile localised
+    over the spatial domain of the tissue microenvironment — drawn as a short
+    vertical **strip** planted at its position ``x`` along the border axis. The
+    strip's *thickness* encodes a magnitude (``weights``, e.g. cluster mass) and
+    a **triangle** glyph encodes polarity (``directions``): ``▲`` above the
+    strip for the *up* group (e.g. elevated), ``▼`` below for the *down* group
+    (e.g. depressed). Stacking many rows gives the **H-Loci Summary** — an
+    integrated view of many features' loci across the microenvironment — with
+    three channels read at a glance: horizontal position (localisation), strip
+    thickness (effect magnitude / cluster mass), and triangle direction (sign of
+    the effect).
+
+    This is the packaged, reusable form of the per-feature "Location of the
+    border band" panel used alongside a significance bar chart. The triangle is
+    offset from the strip end by a fixed number of *points* (independent of the
+    number of rows and of the export dpi), so the gap between strip and glyph
+    stays visually constant and the glyph stays exactly centred on the strip
+    (no horizontal shift).
+
+    Parameters
+    ----------
+    positions : array-like, shape (n,)
+        Signed x-position of each row (e.g. signed cluster mass; sign encodes
+        the side of the border, magnitude the location).
+    directions : array-like, shape (n,)
+        Per-row polarity controlling the triangle. Boolean (``True`` = up),
+        numeric (``> 0`` = up), or string (``"elevated"``/``"up"``/``"high"``…
+        = up). See :func:`_hloci_up_mask`.
+    weights : array-like, shape (n,) | None
+        Non-negative magnitude mapped to strip linewidth via ``lw_range``
+        (min→max). When ``None`` every strip uses ``default_lw``.
+    labels : sequence | None
+        Row (y-tick) labels, bottom to top. When ``None`` no y-tick labels.
+    ax : matplotlib.axes.Axes | None
+        Axis to draw into; a new one is created when ``None``.
+    strip_color : str
+        Colour of the strips and triangles. Default ``"k"``.
+    lw_range : tuple[float, float]
+        ``(min_lw, max_lw)`` linewidth span mapped from ``weights``. Default
+        ``(1.0, 12.0)`` for a wide dynamic range; the smallest weight maps to
+        ``min_lw`` and the largest to ``max_lw``.
+    default_lw : float
+        Strip linewidth used when ``weights`` is ``None`` or constant.
+    half_height : float
+        Half-height of each strip in row-index units. Default ``0.30``.
+    marker_size : float
+        Triangle marker size in points. Default ``6.0``.
+    gap_pt : float
+        Gap between the strip end and the triangle, in points (dpi-independent).
+        Default ``0.9`` (≈ 3 px at 240 dpi).
+    up_marker, down_marker : str
+        Matplotlib markers for the up / down groups. Default ``"^"`` / ``"v"``.
+    marker_edge_width : float
+        Triangle edge linewidth.
+    zero_line : bool
+        Draw a vertical reference line at ``x = 0`` (the boundary).
+    zero_line_color, zero_line_width : str, float
+        Styling of the zero reference line.
+    grid_axis : str | None
+        Axis for a light background grid (``"x"``, ``"y"``, ``"both"`` or
+        ``None`` to disable). Default ``"x"``.
+    xlabel, ylabel, title : str | None
+        Axis labels / title. Pass ``None`` (or ``""`` for the axis labels) to
+        leave unset.
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+        The axis drawn into.
+    """
+    from matplotlib.transforms import offset_copy
+
+    pos = np.asarray(positions, dtype=float)
+    n = len(pos)
+    is_up = _hloci_up_mask(directions)
+    if len(is_up) != n:
+        raise ValueError("positions and directions must have the same length.")
+
+    if weights is None:
+        lw = np.full(n, default_lw, dtype=float)
+    else:
+        w = np.asarray(weights, dtype=float)
+        if len(w) != n:
+            raise ValueError("weights must match the length of positions.")
+        lw = (np.interp(w, (w.min(), w.max()), lw_range)
+              if n and w.max() > w.min() else np.full(n, default_lw, dtype=float))
+
+    if ax is None:
+        fig_h = float(np.clip(0.45 * n + 2.4, 4.0, 18.0))
+        _, ax = plt.subplots(figsize=(5.8, fig_h))
+    fig = ax.figure
+
+    y = np.arange(n)
+    # triangle CENTRE offset beyond the strip end, in points (dpi-independent);
+    # x-offset is 0 so the glyph stays exactly centred on the strip.
+    off = marker_size / 2.0 + gap_pt
+    tr_up = offset_copy(ax.transData, fig=fig, x=0.0, y=+off, units="points")
+    tr_down = offset_copy(ax.transData, fig=fig, x=0.0, y=-off, units="points")
+
+    for _yi, _x, _lwi, _up in zip(y, pos, lw, is_up):
+        ax.plot([_x, _x], [_yi - half_height, _yi + half_height],
+                color=strip_color, lw=_lwi, solid_capstyle="butt", zorder=3)
+        if _up:
+            ax.plot([_x], [_yi + half_height], marker=up_marker, color=strip_color,
+                    ms=marker_size, mec=strip_color, mew=marker_edge_width,
+                    zorder=4, transform=tr_up, clip_on=False)
+        else:
+            ax.plot([_x], [_yi - half_height], marker=down_marker, color=strip_color,
+                    ms=marker_size, mec=strip_color, mew=marker_edge_width,
+                    zorder=4, transform=tr_down, clip_on=False)
+
+    if zero_line:
+        ax.axvline(0.0, color=zero_line_color, lw=zero_line_width, zorder=1)
+
+    ax.set_yticks(y)
+    if labels is not None:
+        ax.set_yticklabels(list(labels), fontsize=8)
+    ax.set_ylim(-0.6, n - 0.4)
+    if xlabel:
+        ax.set_xlabel(xlabel)
+    if ylabel:
+        ax.set_ylabel(ylabel)
+    if title:
+        if title_fontsize is not None:
+            ax.set_title(title, fontsize=title_fontsize)
+        else:
+            ax.set_title(title)
+    if grid_axis:
+        ax.grid(axis=grid_axis, color="0.9", lw=0.6)
+    return ax
+
+
+def plot_hloci_bands(
+    band_lo,
+    band_hi,
+    directions,
+    *,
+    peak=None,
+    labels=None,
+    sort="outer_to_inner",
+    ax=None,
+    up_color="#d62728",
+    down_color="#1f77b4",
+    default_color="0.6",
+    bar_height=0.6,
+    alpha=0.85,
+    edge_color="none",
+    edge_width=0.0,
+    peak_marker=True,
+    peak_marker_color="0.15",
+    peak_marker_width=1.4,
+    boundary_line=True,
+    boundary_line_color="0.5",
+    boundary_line_width=0.9,
+    grid_axis="x",
+    xlabel="border layer L",
+    ylabel=None,
+    title=None,
+    title_fontsize=None,
+):
+    """Draw an **H-Loci Summary (band mode)** panel from cluster-band extents.
+
+    Alternative rendering of the H-Loci Summary in which each row is one
+    feature's **H-Locus** drawn as a *horizontal bar* spanning its actual
+    cluster band ``[band_lo, band_hi]`` on the signed border-layer axis, filled
+    by direction (``up_color`` for elevated, ``down_color`` for depressed). This
+    is the bar-chart counterpart of the direction-shaded ``axvspan`` band used
+    on the per-feature H-plots (i.e. it shows *where* the band sits and *how
+    wide* it is — the cluster width — rather than mapping the mass to a strip
+    thickness as :func:`plot_hloci_summary` does).
+
+    Parameters
+    ----------
+    band_lo, band_hi : array-like, shape (n,)
+        Lower / upper layer bounds of each feature's scored cluster band. Rows
+        with a non-finite bound are skipped.
+    directions : array-like, shape (n,)
+        Per-feature direction, coerced by :func:`_hloci_up_mask` (accepts
+        ``"elevated"``/``"depressed"``, bool, or signed numeric). ``up`` rows
+        are filled with ``up_color``, ``down`` rows with ``down_color``.
+    peak : array-like, shape (n,) | None
+        Optional per-feature peak layer; when given a short vertical tick is
+        drawn inside each bar at that layer.
+    labels : sequence | None
+        Row (y-tick) labels.
+    sort : {"outer_to_inner", "inner_to_outer"} | None
+        Default row ordering, keyed on the **peak centre of cluster mass**
+        (``peak`` when supplied, else the band midpoint). ``"outer_to_inner"``
+        (default) places the outermost H-Loci (stroma side, high layer L) at
+        the top and the innermost (tumour interior, low L) at the bottom;
+        ``"inner_to_outer"`` reverses this. Pass ``None`` (or ``False``) to
+        keep the caller-supplied row order.
+    ax : matplotlib.axes.Axes | None
+        Axis to draw into; a new one is created when ``None``.
+    up_color, down_color : str
+        Fill colours for elevated / depressed bands.
+    default_color : str
+        Fallback fill when a direction cannot be resolved.
+    bar_height : float
+        Height of each horizontal bar (in data units; rows are unit-spaced).
+    alpha : float
+        Bar fill opacity.
+    edge_color : str
+        Bar edge colour. Default ``"none"``.
+    edge_width : float
+        Bar edge width.
+    peak_marker : bool
+        Draw the per-feature peak tick when ``peak`` is provided.
+    peak_marker_color, peak_marker_width : str, float
+        Styling of the peak tick.
+    boundary_line : bool
+        Draw a dashed **vertical** reference at layer 0 (the boundary).
+    boundary_line_color, boundary_line_width : str, float
+        Styling of the boundary line.
+    grid_axis : str | None
+        Axis for a light grid (``"x"``, ``"y"``, ``"both"`` or ``None``).
+    xlabel, ylabel, title : str | None
+        Axis labels / title.
+    title_fontsize : float | None
+        Font size for the title.
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+        The axis drawn into.
+    """
+    lo = np.asarray(band_lo, dtype=float)
+    hi = np.asarray(band_hi, dtype=float)
+    n = len(lo)
+    if len(hi) != n:
+        raise ValueError("band_lo and band_hi must have the same length.")
+    is_up = _hloci_up_mask(directions)
+    if len(is_up) != n:
+        raise ValueError("directions must match the length of band_lo.")
+    pk = np.asarray(peak, dtype=float) if peak is not None else None
+    if pk is not None and len(pk) != n:
+        raise ValueError("peak must match the length of band_lo.")
+
+    # Default row ordering by the peak centre of cluster mass. barh draws row 0
+    # at the bottom and row n-1 at the top, so an ascending sort of the centre
+    # puts the innermost H-Locus at the bottom and the outermost at the top —
+    # i.e. reading the panel top-to-bottom goes outer -> inner.
+    if sort:
+        _center = pk.copy() if pk is not None else (lo + hi) / 2.0
+        _center = np.where(np.isfinite(_center), _center, -np.inf)
+        _order = np.argsort(_center, kind="stable")
+        if str(sort).replace("-", "_") == "inner_to_outer":
+            _order = _order[::-1]
+        lo, hi, is_up = lo[_order], hi[_order], is_up[_order]
+        if pk is not None:
+            pk = pk[_order]
+        if labels is not None:
+            labels = [list(labels)[i] for i in _order]
+
+    if ax is None:
+        fig_h = float(np.clip(0.45 * n + 2.4, 4.0, 18.0))
+        _, ax = plt.subplots(figsize=(5.8, fig_h))
+
+    y = np.arange(n)
+    for _yi, _lo, _hi, _up in zip(y, lo, hi, is_up):
+        if not (np.isfinite(_lo) and np.isfinite(_hi)):
+            continue
+        _left, _width = min(_lo, _hi), abs(_hi - _lo)
+        _col = up_color if _up else down_color
+        ax.barh(_yi, _width, left=_left, height=bar_height,
+                color=_col, alpha=alpha, edgecolor=edge_color,
+                linewidth=edge_width, zorder=3)
+    if pk is not None and peak_marker:
+        for _yi, _pk in zip(y, pk):
+            if np.isfinite(_pk):
+                ax.plot([_pk, _pk], [_yi - bar_height / 2.0, _yi + bar_height / 2.0],
+                        color=peak_marker_color, lw=peak_marker_width, zorder=4)
+
+    if boundary_line:
+        ax.axvline(0.0, color=boundary_line_color, lw=boundary_line_width,
+                   ls="--", zorder=1)
+
+    ax.set_yticks(y)
+    if labels is not None:
+        ax.set_yticklabels(list(labels), fontsize=8)
+    ax.set_ylim(-0.6, n - 0.4)
+    if xlabel:
+        ax.set_xlabel(xlabel)
+    if ylabel:
+        ax.set_ylabel(ylabel)
+    if title:
+        if title_fontsize is not None:
+            ax.set_title(title, fontsize=title_fontsize)
+        else:
+            ax.set_title(title)
+    if grid_axis:
+        ax.grid(axis=grid_axis, color="0.9", lw=0.6)
+    return ax
+
+
+# ── Family-consistent naming aliases ──────────────────────────────────────
+# The GAM-smoothed H-plot panels are named the "H-GAM Plot" (per-group smooth ±
+# CI) and the "H-ΔGAM Plot" (high−low difference ± propagated CI). These
+# aliases expose those names while keeping the original ``plot_hplot_gam`` /
+# ``plot_delta_hplot_gam`` entry points for backward compatibility.
+plot_hgam = plot_hplot_gam
+plot_hgam_delta = plot_delta_hplot_gam
+plot_delta_hgam = plot_delta_hplot_gam  # legacy alias
+
+# The location-of-the-border-band panel is named the "H-Loci Summary" (each row
+# is one feature's H-Locus: position + cluster-mass thickness + direction glyph).
+# ``plot_signpost`` is retained as a backward-compatible alias of the earlier
+# working name.
+plot_signpost = plot_hloci_summary
 

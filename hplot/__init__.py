@@ -11,7 +11,17 @@ __version__ = "0.1.0"
 
 from .core import HPlot
 from .runners import run_hplot_batch
-from .plotting import plot_hplot, plot_hplot_gam, plot_delta_hplot_gam
+from .plotting import (
+    plot_hplot,
+    plot_hplot_gam,
+    plot_delta_hplot_gam,
+    plot_hgam,
+    plot_hgam_delta,
+    plot_delta_hgam,
+    plot_hloci_summary,
+    plot_hloci_bands,
+    plot_signpost,
+)
 from .stats import (
     compute_layer_stats,
     compute_layer_pvalues,
@@ -29,6 +39,12 @@ __all__ = [
     "plot_hplot",
     "plot_hplot_gam",
     "plot_delta_hplot_gam",
+    "plot_hgam",
+    "plot_hgam_delta",
+    "plot_delta_hgam",
+    "plot_hloci_summary",
+    "plot_hloci_bands",
+    "plot_signpost",
     "compute_layer_stats",
     "compute_layer_pvalues",
     "gam_group_curves",
@@ -41,11 +57,9 @@ __all__ = [
     "tl",
     "pl",
     "io",
-    "gr",
 ]
 
 # scanpy-style AnnData API (pp/tl/pl) plus a CSV bridge (io). These submodules
 # import anndata lazily *inside* their functions, so importing hplot (or
-# hplot.core) still works without anndata installed. ``gr`` is a squidpy-style
-# alias: hplot.gr.border_layers is hplot.pp.border_layers.
-from . import pp, tl, pl, io, gr  # noqa: E402
+# hplot.core) still works without anndata installed.
+from . import pp, tl, pl, io  # noqa: E402

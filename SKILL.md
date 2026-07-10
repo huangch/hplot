@@ -279,12 +279,17 @@ hplot.pl.hplot(adata)
 ```
 
 Notes:
-- `hplot.gr.border_layers` is a squidpy-style alias of `hplot.pp.border_layers`.
 - `pp.border_layers` reuses `adata.obsp["spatial_connectivities"]` if present
   (e.g. from `sq.gr.spatial_neighbors`), else builds a Delaunay graph from
   `adata.obsm["spatial"]`.
 - `value_kind="proportion"` profiles a cell-type fraction from an `.obs`
   categorical `target`; `value_kind="expression"` profiles a gene from `.X`.
+- `exclude_base=True` (proportion modes) divides by non-base cells only
+  (`all − base`, using the `base_categories` from `pp.border_layers`); base
+  categories are dropped from the curve set. Use `min_base_excluded_count` to
+  `NaN`-out sparse layers. The CLI equivalents are `--exclude-base` /
+  `--min-base-excluded-count` on `hplot plot|test|gam`, which derive the target
+  from `target_count / (all_count − base_count)`.
 - Re-plot a saved CSV with no AnnData:
   `hplot.pl.hplot_from_csv("hplot-outputs.csv")`.
 - These modules import `anndata` lazily, so `import hplot` still works without

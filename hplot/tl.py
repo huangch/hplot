@@ -27,6 +27,10 @@ def hplot(
     distance_key="hplot_distance_um",
     smoother="mean",
     zscore=False,
+    exclude_base=False,
+    min_base_excluded_count=1,
+    base_cluster_key=None,
+    base_categories=None,
     color_map=None,
     legend_title=None,
     display_base_type="tumour border",
@@ -73,11 +77,21 @@ def hplot(
         )
 
     is_proportion = value_kind in ("proportion", "fraction")
+    if exclude_base and not is_proportion:
+        import warnings
+        warnings.warn(
+            f"exclude_base=True is ignored for value_kind={value_kind!r}; it "
+            "only affects proportion/fraction denominators.",
+            stacklevel=2,
+        )
     df, group_order = _adata_to_tidy(
         adata, target, value_kind=value_kind,
         groupby=None if is_proportion else groupby,
         sample_key=sample_key, layer_key=layer_key,
         distance_key=distance_key, zscore=zscore,
+        exclude_base=exclude_base and is_proportion,
+        min_base_excluded_count=min_base_excluded_count,
+        base_cluster_key=base_cluster_key, base_categories=base_categories,
     )
 
     use_group = is_proportion or (groupby is not None)
