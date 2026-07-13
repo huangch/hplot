@@ -1146,6 +1146,278 @@ def plot_hloci_bands(
     return ax
 
 
+def build_layer_distance_map(layers, distances=None):
+    """Build a ``{layer L: mean physical distance (µm)}`` map.
+
+    Companion to :func:`add_border_distance_axis`. The signed border layer
+    ``L`` is a discrete index, but each ``L`` corresponds to a physical
+    distance from the boundary that varies slightly between slides; this
+    helper averages that distance per layer so the H-Loci Summary can be
+    re-labelled in µm.
+
+    Parameters
+    ----------
+    layers, distances : array-like
+        Either two aligned flat iterables (``layers`` and ``distances``), or,
+        when ``distances`` is ``None``, a single iterable of
+        ``(layers, distances)`` array pairs (e.g. one pair per slide) that are
+        pooled together.
+
+    Returns
+    -------
+    dict[int, float]
+        Map from integer layer ``L`` to its mean distance in µm.
+    """
+    acc = {}
+    pairs = [(layers, distances)] if distances is not None else list(layers)
+    for _lay, _dist in pairs:
+        for _L, _d in zip(np.asarray(_lay).astype(int),
+                          np.asarray(_dist, dtype=float)):
+            acc.setdefault(int(_L), []).append(float(_d))
+    return {L: float(np.mean(v)) for L, v in acc.items()}
+
+
+def add_border_distance_axis(
+    ax,
+    layer_to_distance,
+    *,
+    max_ticks=9,
+    distance_label="physical distance from border (µm)  (<0 tumour | \u2265 0 stroma)",
+    layer_label="border layer L",
+    distance_fmt="{:.0f}",
+    add_top_axis=True,
+):
+    """Re-label an H-Loci Summary band panel with physical distance (µm).
+
+    :func:`plot_hloci_bands` draws its bars against the signed border layer
+    ``L``. This helper rescales the **bottom** x-axis tick labels of that panel
+    to the mean physical distance (µm) each layer corresponds to, and
+    (optionally) adds a twin **top** axis that keeps the integer layer ``L``
+    labels — so the same panel is readable in both units. The axis x-limits are
+    preserved, so band bars stay aligned.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The band-panel axis returned by :func:`plot_hloci_bands`.
+    layer_to_distance : Mapping[int, float]
+        Map from integer layer ``L`` to physical distance in µm, e.g. from
+        :func:`build_layer_distance_map`.
+    max_ticks : int
+        Maximum number of ticks to display; evenly thinned when exceeded.
+    distance_label, layer_label : str
+        Axis labels for the bottom (distance) and top (layer) axes. Pass an
+        empty string to leave a label unchanged.
+    distance_fmt : str
+        Format string for the µm tick labels.
+    add_top_axis : bool
+        When ``True`` (default) add the twin top axis with layer labels.
+
+    Returns
+    -------
+    matplotlib.axes.Axes | None
+        The twin top axis when ``add_top_axis`` is ``True``, else ``None``.
+    """
+    xlim = ax.get_xlim()
+    ticks = sorted(L for L in layer_to_distance if xlim[0] <= L <= xlim[1])
+    if max_ticks and len(ticks) > max_ticks:
+        ticks = ticks[:: int(np.ceil(len(ticks) / float(max_ticks)))]
+    ax.set_xticks(ticks)
+    ax.set_xticklabels([distance_fmt.format(layer_to_distance[L]) for L in ticks])
+    if distance_label:
+        ax.set_xlabel(distance_label)
+    top = None
+    if add_top_axis:
+        top = ax.twiny()
+        top.set_xlim(xlim)
+        top.set_xticks(ticks)
+        top.set_xticklabels([str(int(L)) for L in ticks])
+        if layer_label:
+            top.set_xlabel(layer_label)
+    return top
+
+
+def _hloci_bidir_order(n, elev_center, depr_center, elev_mass, depr_mass, sort_by):
+    """Row ordering for the bidirectional H-Loci Summary.
+
+    Returns an index array. Missing centres sort last (``+inf``) so genes with a
+    band are shown before genes without one, for every keyed mode. ``barh``
+    draws row 0 at the bottom, so the returned order is applied as-is (row i of
+    the order → y-position i) and the *first* entry ends at the bottom.
+    """
+    if not sort_by:
+        return np.arange(n)
+    ec = np.where(np.isfinite(elev_center), elev_center, np.inf)
+    dc = np.where(np.isfinite(depr_center), depr_center, np.inf)
+    key = str(sort_by).replace("-", "_")
+    if key == "elevated_center":
+        k = ec
+    elif key == "depressed_center":
+        k = dc
+    elif key == "midpoint":
+        both = np.isfinite(elev_center) & np.isfinite(depr_center)
+        k = np.where(both, (np.nan_to_num(elev_center) + np.nan_to_num(depr_center)) / 2.0,
+                     np.where(np.isfinite(elev_center), elev_center,
+                              np.where(np.isfinite(depr_center), depr_center, np.inf)))
+    elif key == "dominant_center":
+        em = np.nan_to_num(elev_mass, nan=0.0) if elev_mass is not None else np.zeros(n)
+        dm = np.nan_to_num(depr_mass, nan=0.0) if depr_mass is not None else np.zeros(n)
+        k = np.where(em >= dm, ec, dc)
+        # if the dominant direction has no centre, fall back to the other
+        k = np.where(np.isfinite(k), k, np.where(np.isfinite(ec), ec, dc))
+    else:
+        raise ValueError(
+            "sort_by must be one of 'dominant_center', 'elevated_center', "
+            "'depressed_center', 'midpoint', or None."
+        )
+    return np.argsort(k, kind="stable")
+
+
+def plot_hloci_bands_bidirectional(
+    labels,
+    elev_lo,
+    elev_hi,
+    depr_lo,
+    depr_hi,
+    *,
+    elev_center=None,
+    depr_center=None,
+    elev_mass=None,
+    depr_mass=None,
+    sort_by="dominant_center",
+    ax=None,
+    up_color="#d62728",
+    down_color="#1f77b4",
+    bar_height=0.6,
+    alpha=0.85,
+    edge_color="none",
+    edge_width=0.0,
+    center_marker=True,
+    center_marker_color="0.15",
+    center_marker_width=1.4,
+    boundary_line=True,
+    boundary_line_color="0.5",
+    boundary_line_width=0.9,
+    grid_axis="x",
+    xlabel="border layer L",
+    ylabel=None,
+    title=None,
+    title_fontsize=None,
+):
+    """Draw a **bidirectional H-Loci Summary**: two bands per gene row.
+
+    Each gene occupies a single row on which up to two directional H-domains are
+    drawn: the **elevated** band (``up_color``) and the **depressed** band
+    (``down_color``), each with its own centre-of-mass tick. Genes for which a
+    direction is absent (non-finite bounds) simply omit that band; a gene with
+    neither band draws an empty row. This is the visual counterpart of
+    :func:`hplot.stats.gradient_cluster_mass_screen` in
+    ``band_mode="bidirectional"``.
+
+    A depressed band on one side and an elevated band on the other may be the
+    two ends of a single monotonic gradient rather than two independent
+    programmes — this panel shows *where* each directional domain sits, it does
+    not assert independence.
+
+    Parameters
+    ----------
+    labels : sequence, shape (n,)
+        Gene / feature row labels (one per row).
+    elev_lo, elev_hi : array-like, shape (n,)
+        Elevated-band lower / upper layer bounds. Non-finite → no elevated band.
+    depr_lo, depr_hi : array-like, shape (n,)
+        Depressed-band lower / upper layer bounds. Non-finite → no depressed band.
+    elev_center, depr_center : array-like | None
+        Per-direction centre-of-mass layer (tick position). Defaults to the band
+        midpoint when omitted.
+    elev_mass, depr_mass : array-like | None
+        Per-direction cluster mass; required for ``sort_by="dominant_center"``.
+    sort_by : {"dominant_center", "elevated_center", "depressed_center", \
+"midpoint"} | None
+        Row ordering key (see :func:`_hloci_bidir_order`). ``None`` keeps the
+        caller-supplied order.
+    ax : matplotlib.axes.Axes | None
+        Axis to draw into; created when ``None``.
+    up_color, down_color : str
+        Elevated / depressed band colours.
+    bar_height, alpha, edge_color, edge_width : float, float, str, float
+        Bar styling.
+    center_marker, center_marker_color, center_marker_width : bool, str, float
+        Centre-of-mass tick styling.
+    boundary_line, boundary_line_color, boundary_line_width : bool, str, float
+        Layer-0 boundary reference styling.
+    grid_axis : str | None
+        Light-grid axis (``"x"``/``"y"``/``"both"``/``None``).
+    xlabel, ylabel, title, title_fontsize : str | None, str | None, str | None, float | None
+        Labels / title.
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+        The axis drawn into.
+    """
+    elo = np.asarray(elev_lo, dtype=float)
+    ehi = np.asarray(elev_hi, dtype=float)
+    dlo = np.asarray(depr_lo, dtype=float)
+    dhi = np.asarray(depr_hi, dtype=float)
+    n = len(elo)
+    for arr in (ehi, dlo, dhi):
+        if len(arr) != n:
+            raise ValueError("all band-bound arrays must have the same length.")
+    labels = list(labels)
+    if len(labels) != n:
+        raise ValueError("labels must match the number of rows.")
+    ec = np.asarray(elev_center, dtype=float) if elev_center is not None else (elo + ehi) / 2.0
+    dc = np.asarray(depr_center, dtype=float) if depr_center is not None else (dlo + dhi) / 2.0
+    em = np.asarray(elev_mass, dtype=float) if elev_mass is not None else None
+    dm = np.asarray(depr_mass, dtype=float) if depr_mass is not None else None
+
+    order = _hloci_bidir_order(n, ec, dc, em, dm, sort_by)
+    elo, ehi, dlo, dhi = elo[order], ehi[order], dlo[order], dhi[order]
+    ec, dc = ec[order], dc[order]
+    labels = [labels[i] for i in order]
+
+    if ax is None:
+        fig_h = float(np.clip(0.45 * n + 2.4, 4.0, 18.0))
+        _, ax = plt.subplots(figsize=(5.8, fig_h))
+
+    y = np.arange(n)
+    for _yi, _elo, _ehi, _ec, _dlo, _dhi, _dc in zip(y, elo, ehi, ec, dlo, dhi, dc):
+        if np.isfinite(_elo) and np.isfinite(_ehi):
+            ax.barh(_yi, abs(_ehi - _elo), left=min(_elo, _ehi), height=bar_height,
+                    color=up_color, alpha=alpha, edgecolor=edge_color,
+                    linewidth=edge_width, zorder=3)
+            if center_marker and np.isfinite(_ec):
+                ax.plot([_ec, _ec], [_yi - bar_height / 2.0, _yi + bar_height / 2.0],
+                        color=center_marker_color, lw=center_marker_width, zorder=4)
+        if np.isfinite(_dlo) and np.isfinite(_dhi):
+            ax.barh(_yi, abs(_dhi - _dlo), left=min(_dlo, _dhi), height=bar_height,
+                    color=down_color, alpha=alpha, edgecolor=edge_color,
+                    linewidth=edge_width, zorder=3)
+            if center_marker and np.isfinite(_dc):
+                ax.plot([_dc, _dc], [_yi - bar_height / 2.0, _yi + bar_height / 2.0],
+                        color=center_marker_color, lw=center_marker_width, zorder=4)
+
+    if boundary_line:
+        ax.axvline(0.0, color=boundary_line_color, lw=boundary_line_width,
+                   ls="--", zorder=1)
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels, fontsize=8)
+    ax.set_ylim(-0.6, n - 0.4)
+    if xlabel:
+        ax.set_xlabel(xlabel)
+    if ylabel:
+        ax.set_ylabel(ylabel)
+    if title:
+        if title_fontsize is not None:
+            ax.set_title(title, fontsize=title_fontsize)
+        else:
+            ax.set_title(title)
+    if grid_axis:
+        ax.grid(axis=grid_axis, color="0.9", lw=0.6)
+    return ax
+
+
 # ── Family-consistent naming aliases ──────────────────────────────────────
 # The GAM-smoothed H-plot panels are named the "H-GAM Plot" (per-group smooth ±
 # CI) and the "H-ΔGAM Plot" (high−low difference ± propagated CI). These

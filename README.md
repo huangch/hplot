@@ -667,6 +667,74 @@ plot_hplot(
 
 ---
 
+## H-Loci Summary panels
+
+A Stage-1 screen run across **many features** (genes, ligand→receptor pairs,
+cell-type fractions) yields, per feature, a scored *cluster band* — the run of
+border layers where the value departs from baseline — with a direction
+(up / down), a centre (peak layer), and a magnitude (cluster mass). The
+**H-Loci Summary** family renders those bands as compact, stackable panels so a
+whole screen is readable at a glance. Feed them the output columns of
+`gradient_cluster_mass_screen()` / `directional_cluster_bands()`.
+
+Three renderings share the same signed border-layer x-axis (0 = boundary,
+`< 0` inside the tissue, `> 0` in the stroma):
+
+| Function | One row shows | Best for |
+|----------|---------------|----------|
+| `plot_hloci_summary()` | a **strip** planted at the band position; thickness = cluster mass, ▲ / ▼ = direction | dense overviews of hundreds of features |
+| `plot_hloci_bands()` | a **horizontal bar** spanning `[band_lo, band_hi]`, filled by direction, with a peak tick | showing *where* and *how wide* each band sits |
+| `plot_hloci_bands_bidirectional()` | **two bars** per row (elevated + depressed), each with a centre tick | features with a band on both sides of the front |
+
+Direction is colour-coded by `up_color` (default red `#d62728`) and `down_color`
+(default blue `#1f77b4`). These names are deliberately **direction-neutral** —
+"up" = above baseline, "down" = below — so the same panel serves an *intensity*
+readout (elevated / depressed expression or interaction score) **and** a
+*compositional* one (enriched / depleted cell fraction); the caption supplies
+the domain wording. Row ordering is controlled by `sort=` (keyed on the peak
+centre of cluster mass); pass `sort=None` to keep the caller's order.
+
+```python
+import hplot
+
+# rank rows however you like (e.g. by peak layer = centre of the band)
+rank = screen_df[screen_df["peak_layer"].notna()].sort_values("peak_layer")
+
+ax = hplot.plot_hloci_bands(
+    rank["band_lo"], rank["band_hi"], rank["direction"],
+    peak=rank["peak_layer"], labels=rank["gene"],
+    sort=None,                       # keep caller order (already sorted)
+    xlabel="border layer L",
+)
+```
+
+### Physical-distance x-axis
+
+The band x-axis is in integer **layer** units `L`. To also show the physical
+distance from the border (µm), rescale the axis with the two helpers instead of
+hand-rolling a twin axis:
+
+```python
+# map each layer L -> mean distance (µm), pooled across slides
+layer2um = hplot.build_layer_distance_map(
+    [(res[sid]["layers"], res[sid]["distances"]) for sid in sample_ids])
+
+# bottom axis -> µm, twin top axis kept in layer L (x-limits preserved)
+hplot.add_border_distance_axis(ax, layer2um)
+```
+
+`build_layer_distance_map()` also accepts two flat aligned arrays
+(`layers`, `distances`). `add_border_distance_axis()` returns the twin top axis
+(or `None` when `add_top_axis=False`) and leaves the band bars aligned because
+it never changes the x-limits.
+
+| Helper | Purpose |
+|--------|---------|
+| `build_layer_distance_map(layers, distances=None)` | Average physical distance (µm) per signed layer `L`. Accepts two flat arrays, or one iterable of per-slide `(layers, distances)` pairs. |
+| `add_border_distance_axis(ax, layer_to_distance, *, max_ticks=9, add_top_axis=True, …)` | Re-label a band panel's bottom axis in µm and add a twin top axis in layer `L`. |
+
+---
+
 ## Input data format
 
 | Column | Required | Description |
@@ -732,7 +800,10 @@ Outputs: effect size (Δ), Wald p-value, n; optionally per-group curve CSV.
 ```
 hplot/
   core.py      — HPlot class (fit / plot / plot_delta / gam_delta / savefig)
-  plotting.py  — plot_hplot(), plot_hplot_gam() and plot_delta_hplot_gam() rendering functions
+  plotting.py  — plot_hplot(), plot_hplot_gam(), plot_delta_hplot_gam();
+                 H-Loci Summary panels (plot_hloci_summary / plot_hloci_bands /
+                 plot_hloci_bands_bidirectional) + border distance-axis helpers
+                 (build_layer_distance_map / add_border_distance_axis)
   stats.py     — compute_layer_stats(), compute_layer_pvalues(),
                  gam_group_curves(), gam_delta_curve(), gam_pooled_effect()
   runners.py   — run_hplot_batch() batch helper

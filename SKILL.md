@@ -297,6 +297,53 @@ Notes:
 
 ---
 
+### 5.7 H-Loci Summary — visualizing a multi-feature screen
+
+The engine above profiles **one** target across layers. To summarize a
+**screen over many features** (genes, ligand→receptor pairs, or cell-type
+fractions), each feature is first reduced to a scored *cluster band* — the run
+of border layers where it departs from baseline — with a direction, a centre
+(peak layer), and a magnitude (cluster mass). Those are produced by
+`hplot.stats.gradient_cluster_mass_screen()` / `directional_cluster_bands()`
+and rendered by the **H-Loci Summary** family:
+
+| Function | One row per feature shows | Use when |
+| -------- | ------------------------- | -------- |
+| `plot_hloci_summary()` | a strip at the band position; thickness = cluster mass, ▲/▼ = direction | overview of hundreds of features |
+| `plot_hloci_bands()` | a horizontal bar over `[band_lo, band_hi]`, filled by direction, peak tick | where + how wide each band sits |
+| `plot_hloci_bands_bidirectional()` | two bars (elevated + depressed) per row | features banded on both sides |
+
+```python
+import hplot
+
+rank = screen_df[screen_df["peak_layer"].notna()].sort_values("peak_layer")
+ax = hplot.plot_hloci_bands(
+    rank["band_lo"], rank["band_hi"], rank["direction"],
+    peak=rank["peak_layer"], labels=rank["gene"],
+    sort=None,                        # keep caller order
+)
+
+# optional: add a physical-distance (µm) axis under the layer axis
+layer2um = hplot.build_layer_distance_map(
+    [(res[sid]["layers"], res[sid]["distances"]) for sid in sample_ids])
+hplot.add_border_distance_axis(ax, layer2um)
+```
+
+`up_color` / `down_color` are **direction-neutral** ("up" = above baseline,
+"down" = below), so the same panel serves intensity readouts (elevated /
+depressed expression or interaction score) and compositional ones (enriched /
+depleted cell fraction) — the caption supplies the domain wording. Pass
+`sort=None` to keep your row order, or `sort="outer_to_inner"` /
+`"inner_to_outer"` to order by band centre.
+
+`build_layer_distance_map(layers, distances=None)` averages the physical
+distance (µm) per signed layer `L` (two flat arrays, or one iterable of
+per-slide `(layers, distances)` pairs). `add_border_distance_axis(ax,
+layer_to_distance)` re-labels the panel's bottom axis in µm and adds a twin top
+axis in layer `L`, preserving the x-limits so the band bars stay aligned.
+
+---
+
 ## 6. `HPlot.fit()` Parameters
 
 | Parameter       | Type               | Default | Description                                              |
@@ -370,6 +417,8 @@ python run_hplot.py \
 | Generate batch plots for a full cohort               | Use `run_hplot_batch()` or the CLI with `--group`        |
 | Customize colors to match publication style          | Use `color_map={"hot": "red", "cold": "blue"}`           |
 | Embed plot in a larger multi-panel figure            | Pass an existing `ax` to `plot()`                        |
+| Summarize a many-feature screen (genes / LR / fractions) | `plot_hloci_bands()` / `plot_hloci_summary()` on the screen output (§ 5.7) |
+| Add a physical-distance (µm) axis to an H-Loci panel | `add_border_distance_axis(ax, build_layer_distance_map(...))` |
 
 ---
 

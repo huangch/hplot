@@ -926,3 +926,566 @@ def compute_layer_kruskal_pvalues(
     out = pd.DataFrame(rows).sort_values(layer_col).reset_index(drop=True)
     out["p_adj"] = _adjust_pvalues(out["p_value"].to_numpy(), correction)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Single-group directional cluster-mass gradient screen (bidirectional H-loci)
+# ---------------------------------------------------------------------------
+#
+# Terminology
+# -----------
+# Elevated H-domain
+#     The maximum-mass *positive* contiguous supra-threshold deviation of a
+#     feature relative to its analysis-window mean (``z_obs > 0``).
+# Depressed H-domain
+#     The maximum-mass *negative* contiguous supra-threshold deviation relative
+#     to the analysis-window mean (``z_obs < 0``).
+# Bidirectional H-locus representation
+#     The pair of directional H-domains (elevated, depressed) reported for one
+#     feature.  Either, both, or neither may exist / be significant.
+# Dominant H-locus
+#     The larger-mass of the two directional domains.
+#
+# Direction is always *relative to the feature's own mean within the predefined
+# analysis window* (the layer range used to build the deviation tensor). An
+# elevated and a depressed H-domain may simply be the two sides of a single
+# monotonic spatial gradient rather than two independent biological programmes;
+# a depressed band does **not** imply that every other layer is elevated, nor
+# vice versa.
+
+
+def _best_band_combined(h, supra, min_w):
+    """Original winner-take-all band: largest-mass contiguous supra run.
+
+    Direction-agnostic contiguous run over the (sign-agnostic) *supra* mask,
+    maximising the summed unsigned mass ``h``.  This reproduces the historical
+    ``_best_mass`` behaviour used by the ``band_mode="dominant"`` path.
+
+    Returns ``(mass, start_idx, end_idx)`` with ``start_idx == end_idx == -1``
+    when no qualifying run exists.
+    """
+    L = len(h)
+    rm = 0.0
+    rl = 0
+    start = 0
+    best = 0.0
+    bs = be = -1
+    for li in range(L):
+        if supra[li]:
+            if rl == 0:
+                start = li
+            rm += h[li]
+            rl += 1
+            if rl >= min_w and rm > best:
+                best = rm
+                bs = start
+                be = li
+        else:
+            rm = 0.0
+            rl = 0
+    return best, bs, be
+
+
+def _best_band_masked(h, mask, min_w):
+    """Largest-mass contiguous run of ``h`` restricted to ``mask``.
+
+    ``mask`` is a boolean directional supra-threshold mask (e.g.
+    ``(z > 0) & (h > thr)``).  Runs are strictly contiguous: a single
+    below-threshold / wrong-sign layer terminates the run.
+
+    Returns ``(mass, start_idx, end_idx)`` with ``-1`` indices when empty.
+    """
+    return _best_band_combined(h, mask, min_w)
+
+
+def _band_descriptor(h, z, bs, be, grid, direction):
+    """Build a directional-band descriptor dict from band index bounds.
+
+    ``center_of_mass`` is computed from the *unsigned* mass weights ``h`` over
+    the band layers (not from the peak layer).  ``peak_idx`` / ``peak_layer``
+    are retained separately for backward compatibility.
+    """
+    if bs < 0 or be < bs:
+        return None
+    idx = np.arange(bs, be + 1)
+    hh = h[bs:be + 1]
+    layers = np.asarray(grid, dtype=float)[bs:be + 1]
+    mass = float(np.nansum(hh))
+    peak_local = int(np.nanargmax(hh))
+    peak_idx = bs + peak_local
+    w = np.nan_to_num(hh, nan=0.0)
+    wsum = float(w.sum())
+    com_layer = float((layers * w).sum() / wsum) if wsum > 0 else float(np.nanmean(layers))
+    return {
+        "start_idx": int(bs),
+        "end_idx": int(be),
+        "start_layer": float(grid[bs]),
+        "end_layer": float(grid[be]),
+        "width_layers": int(be - bs + 1),
+        "mass": mass,
+        "peak_idx": int(peak_idx),
+        "peak_layer": float(grid[peak_idx]),
+        "center_of_mass": com_layer,
+        "mean_signed_effect": float(np.nanmean(z[bs:be + 1])),
+        "direction": direction,
+    }
+
+
+def directional_cluster_bands(z, thr=None, min_w=1, cluster_alpha=0.05, grid=None):
+    """Detect the largest elevated and depressed H-domains of one profile.
+
+    Treats positive and negative deviations as two *separate* directional
+    searches over the same cluster-forming threshold, instead of squaring the
+    signed statistic and keeping a single winner-take-all cluster.
+
+    Parameters
+    ----------
+    z : array-like, shape (L,)
+        Signed per-layer statistic (``z > 0`` elevated, ``z < 0`` depressed,
+        relative to the analysis-window mean). NaNs are treated as sub-threshold.
+    thr : float | None
+        Cluster-forming threshold applied to the *unsigned* statistic
+        ``h = z ** 2``.  When ``None`` it defaults to
+        ``chi2.ppf(1 - cluster_alpha, df=1)`` — the same threshold used by the
+        dominant-mode screen.
+    min_w : int
+        Minimum contiguous width (layers) for a run to count. Default 1.
+    cluster_alpha : float
+        Used only when ``thr is None``. Default 0.05.
+    grid : array-like | None
+        Layer coordinates aligned with ``z``. Defaults to ``arange(L)``.
+
+    Returns
+    -------
+    dict
+        ``{"elevated": desc | None, "depressed": desc | None, "thr": thr}``
+        where each descriptor is the dict produced by :func:`_band_descriptor`.
+    """
+    z = np.asarray(z, dtype=float)
+    L = z.size
+    if grid is None:
+        grid = np.arange(L)
+    grid = np.asarray(grid, dtype=float)
+    if grid.size != L:
+        raise ValueError("grid must match the length of z.")
+    if thr is None:
+        thr = float(chi2.ppf(1.0 - cluster_alpha, df=1))
+    h = np.nan_to_num(z ** 2, nan=0.0)
+    supra = h > thr
+    pos = supra & (z > 0)
+    neg = supra & (z < 0)
+    _, bs_p, be_p = _best_band_masked(h, pos, min_w)
+    _, bs_n, be_n = _best_band_masked(h, neg, min_w)
+    return {
+        "elevated": _band_descriptor(h, z, bs_p, be_p, grid, "elevated"),
+        "depressed": _band_descriptor(h, z, bs_n, be_n, grid, "depressed"),
+        "thr": float(thr),
+    }
+
+
+def deviation_tensor(values, layers, grid, *, baseline_window=None,
+                     min_baseline_layers=3, verbose=True):
+    """Assemble the per-slide deviation tensor for the gradient screen.
+
+    Each slide's per-layer values are placed onto a common ``grid`` (the
+    cluster-mass analysis window) after subtracting a per-slide, per-unit
+    **baseline**. The baseline *reference region* is selected with
+    ``baseline_window`` and is independent of the layers that are actually
+    tested for bands (those are always the ``grid`` layers):
+
+    * ``None`` or ``"window"`` — baseline = mean over the slide's layers that
+      fall inside ``grid`` (the historical default; deviations are relative to
+      the slide's own window-wide level);
+    * ``"far_stroma"`` — baseline = mean over the slide's layers beyond the
+      stroma end of ``grid`` (``L > max(grid)``), i.e. tissue away from the
+      tumour on the stromal side (a "healthy tissue" reference);
+    * ``"far_tumor"`` — baseline = mean over the slide's layers beyond the
+      tumour end of ``grid`` (``L < min(grid)``);
+    * ``(a, b)`` — baseline = mean over the slide's layers with
+      ``a <= L <= b`` (an explicit reference window).
+
+    A slide that contributes fewer than ``min_baseline_layers`` layers to its
+    chosen baseline region is dropped from the tensor (its whole row is NaN),
+    so an unstable / poorly sampled reference never enters the pooled statistic.
+
+    Parameters
+    ----------
+    values : sequence of ndarray, each ``(n_layers_slide, n_units)``
+        Per-slide per-layer values (e.g. mean expression).
+    layers : sequence of int ndarray, each ``(n_layers_slide,)``
+        Integer layer coordinate for every row of the matching ``values``.
+    grid : array-like, ``(n_layers,)``
+        Layer coordinates of the analysis window (the tested layers).
+    baseline_window : None | "window" | "far_stroma" | "far_tumor" | (int, int)
+        Baseline reference-region selector (see above). Default ``None``.
+    min_baseline_layers : int
+        Minimum number of baseline-region layers a slide must contribute; a
+        slide below this is skipped (all-NaN). Default 3 (a 3-layer average
+        roughly halves the baseline noise vs a single layer). The default
+        ``"window"`` baseline is almost always well above this, so raising it
+        mainly guards the sparser ``"far_stroma"`` / ``"far_tumor"`` references.
+    verbose : bool
+        Print a one-line warning when one or more slides are skipped for an
+        insufficient baseline region. Default True.
+
+    Returns
+    -------
+    D : ndarray, shape ``(n_slides, n_layers, n_units)``
+        Deviation tensor (NaN where a slide has no data / an unusable baseline).
+    """
+    grid = np.asarray(grid).astype(int)
+    nG = grid.size
+    gpos = {int(L): i for i, L in enumerate(grid)}
+    lo, hi = int(grid.min()), int(grid.max())
+    n_slides = len(values)
+    if len(layers) != n_slides:
+        raise ValueError("values and layers must have the same length.")
+
+    n_units = None
+    for V in values:
+        V = np.asarray(V)
+        if V.size:
+            n_units = V.shape[1]
+            break
+    if n_units is None:
+        raise ValueError("no slide contributes any values.")
+
+    def _baseline_mask(lay):
+        if baseline_window is None or baseline_window == "window":
+            return np.array([int(L) in gpos for L in lay], dtype=bool)
+        if baseline_window == "far_stroma":
+            return lay > hi
+        if baseline_window == "far_tumor":
+            return lay < lo
+        try:
+            a, b = baseline_window
+        except (TypeError, ValueError):
+            raise ValueError(
+                "baseline_window must be None, 'window', 'far_stroma', "
+                "'far_tumor', or an (a, b) tuple.")
+        return (lay >= int(a)) & (lay <= int(b))
+
+    D = np.full((n_slides, nG, n_units), np.nan, dtype=float)
+    n_data = 0
+    n_skip_base = 0
+    for si, (V, lay) in enumerate(zip(values, layers)):
+        V = np.asarray(V, dtype=float)
+        lay = np.asarray(lay).astype(int)
+        if V.size == 0 or lay.size == 0:
+            continue
+        n_data += 1
+        bmask = _baseline_mask(lay)
+        if int(np.count_nonzero(bmask)) < min_baseline_layers:
+            n_skip_base += 1  # unstable / missing baseline -> skip this slide
+            continue
+        base = V[bmask].mean(axis=0)
+        for k, L in enumerate(lay):
+            gi = gpos.get(int(L))
+            if gi is not None:
+                D[si, gi] = V[k] - base
+    if verbose and n_skip_base:
+        region = baseline_window if baseline_window is not None else "window"
+        print(f"\u26a0 deviation_tensor: skipped {n_skip_base}/{n_data} slide(s) "
+              f"with < {min_baseline_layers} baseline layer(s) in {region!r} "
+              f"region (excluded from the pooled statistic).")
+    return D
+
+
+def _signed_layer_z(D, min_per_group=10):
+    """Per-layer signed z across slides: ``mean / sem`` (NaN-tolerant).
+
+    ``D`` is the ``(n_slides, n_layers, n_units)`` deviation tensor (each entry
+    is a slide's per-layer value minus its analysis-window mean). A layer/unit
+    receives a statistic only where at least ``min_per_group`` slides contribute
+    and the standard error is positive; otherwise NaN.
+    """
+    n = np.sum(~np.isnan(D), axis=0)
+    mu = np.nanmean(D, axis=0)
+    sd = np.nanstd(D, axis=0, ddof=1)
+    se = sd / np.sqrt(np.maximum(n, 1))
+    with np.errstate(invalid="ignore", divide="ignore"):
+        z = np.where((n >= min_per_group) & (se > 0), mu / se, np.nan)
+    return z
+
+
+def _dominance_score(m_elev, m_depr):
+    """Dominance / ambiguity measure for a gene's two directional masses.
+
+    ``(m1 - m2) / m1`` with ``m1 = max`` and ``m2 = min`` when both directions
+    exist; ``1.0`` when only one exists; ``NaN`` when neither exists. Close to 1
+    means one direction clearly dominates; close to 0 means the two directions
+    have similar mass and a single dominant-band summary would be ambiguous.
+    """
+    e = float(m_elev) if np.isfinite(m_elev) else 0.0
+    d = float(m_depr) if np.isfinite(m_depr) else 0.0
+    if e <= 0.0 and d <= 0.0:
+        return np.nan
+    if e <= 0.0 or d <= 0.0:
+        return 1.0
+    m1, m2 = (e, d) if e >= d else (d, e)
+    return (m1 - m2) / m1
+
+
+def gradient_cluster_mass_screen(
+    D,
+    grid,
+    *,
+    unit_names=None,
+    band_mode="dominant",
+    cluster_alpha=0.05,
+    min_w=1,
+    min_per_group=10,
+    n_perm=1000,
+    seed=0,
+    layer_um=None,
+    progress=False,
+):
+    """Single-group directional cluster-mass border-gradient screen.
+
+    Generalises the notebook's pooled ``_screen_gradient`` into a reusable,
+    testable routine.  For each unit (gene / interaction pair) it forms the
+    signed per-layer statistic across slides, then either
+
+    * ``band_mode="dominant"`` — reproduces the historical winner-take-all
+      behaviour: one direction-agnostic maximum-mass band per unit, with a
+      single pooled-permutation FDR; or
+    * ``band_mode="bidirectional"`` — reports the largest **elevated** and the
+      largest **depressed** band independently, each with its own directional
+      permutation null and a BH-FDR taken across all unit x direction
+      hypotheses.
+
+    The permutation null preserves the analysis's original scheme: within each
+    slide the layers of the deviation tensor are shuffled, breaking the
+    layer<->value association while keeping the per-slide marginal.
+
+    Parameters
+    ----------
+    D : numpy.ndarray, shape (n_slides, n_layers, n_units)
+        Per-slide deviation tensor (value minus the slide's analysis-window
+        mean). NaN-tolerant.
+    grid : array-like, shape (n_layers,)
+        Layer coordinates for the columns of ``D``.
+    unit_names : sequence | None
+        Names for the units (genes/pairs). Defaults to integer indices.
+    band_mode : {"dominant", "bidirectional"}
+        Selection behaviour (see above). Default ``"dominant"`` for backward
+        compatibility.
+    cluster_alpha : float
+        Cluster-forming threshold ``chi2.ppf(1 - cluster_alpha, df=1)`` on the
+        squared statistic. Default 0.05.
+    min_w : int
+        Minimum contiguous band width in layers. Default 1.
+    min_per_group : int
+        Minimum contributing slides per layer. Default 10.
+    n_perm : int
+        Number of layer-shuffle permutations. Default 1000.
+    seed : int
+        RNG seed. Default 0.
+    layer_um : dict | None
+        Optional ``{layer: micron}`` map to populate the ``*_um`` columns.
+    progress : bool
+        Show a tqdm bar over permutations if available. Default False.
+
+    Returns
+    -------
+    dict
+        ``thr`` : float
+        ``z`` : ndarray (n_layers, n_units) signed per-layer statistic.
+        ``long`` : DataFrame, one row per (unit, direction) that has a band.
+        ``wide`` : DataFrame, one row per unit (elevated_* / depressed_* cols).
+        ``band_mode`` : str echoing the mode used.
+    """
+    D = np.asarray(D, dtype=float)
+    if D.ndim != 3:
+        raise ValueError("D must be a (n_slides, n_layers, n_units) tensor.")
+    n_slides, n_layers, n_units = D.shape
+    grid = np.asarray(grid)
+    if grid.size != n_layers:
+        raise ValueError("grid must match D's layer axis.")
+    if band_mode not in ("dominant", "bidirectional"):
+        raise ValueError("band_mode must be 'dominant' or 'bidirectional'.")
+    if unit_names is None:
+        unit_names = list(range(n_units))
+    unit_names = list(unit_names)
+    if len(unit_names) != n_units:
+        raise ValueError("unit_names must match D's unit axis.")
+
+    thr = float(chi2.ppf(1.0 - cluster_alpha, df=1))
+    z_obs = _signed_layer_z(D, min_per_group)
+    h_obs = np.nan_to_num(z_obs ** 2, nan=0.0)
+
+    def _um(layer):
+        if layer_um is None or not np.isfinite(layer):
+            return np.nan
+        return float(layer_um.get(int(round(layer)), np.nan))
+
+    def _perm_iter():
+        it = range(n_perm)
+        if progress:
+            try:
+                from tqdm.auto import tqdm as _tqdm
+                return _tqdm(it, desc="perms", leave=False)
+            except ImportError:
+                return it
+        return it
+
+    rng = np.random.default_rng(seed)
+
+    if band_mode == "dominant":
+        # ---- observed: combined winner-take-all band per unit ---------------
+        obs_mass = np.zeros(n_units)
+        bs_o = np.full(n_units, -1)
+        be_o = np.full(n_units, -1)
+        for u in range(n_units):
+            m, bs, be = _best_band_combined(h_obs[:, u], h_obs[:, u] > thr, min_w)
+            obs_mass[u], bs_o[u], be_o[u] = m, bs, be
+        # ---- pooled-permutation null (historical estimator) -----------------
+        null = np.empty((n_perm, n_units), dtype=np.float32)
+        for b in _perm_iter():
+            Dp = np.empty_like(D)
+            for si in range(n_slides):
+                Dp[si] = D[si][rng.permutation(n_layers)]
+            hp = np.nan_to_num(_signed_layer_z(Dp, min_per_group) ** 2, nan=0.0)
+            for u in range(n_units):
+                null[b, u], _, _ = _best_band_combined(hp[:, u], hp[:, u] > thr, min_w)
+        perm_p = np.maximum((null >= obs_mass[None, :]).mean(0), 1.0 / n_perm)
+        order = np.argsort(-obs_mass)
+        obs_s = obs_mass[order]
+        flat = np.sort(null.ravel())
+        ge = flat.size - np.searchsorted(flat, obs_s, side="left")
+        EV = ge / n_perm
+        R = np.arange(1, n_units + 1)
+        fdr_s = np.minimum(EV / R, 1.0)
+        fdr_s = np.minimum.accumulate(fdr_s[::-1])[::-1]
+        fdr = np.empty(n_units)
+        fdr[order] = fdr_s
+        fdr[obs_mass <= 0] = 1.0
+
+        rows = []
+        wide = []
+        for u in range(n_units):
+            desc = _band_descriptor(h_obs[:, u], z_obs[:, u], bs_o[u], be_o[u],
+                                    grid, None)
+            rec = {"gene": unit_names[u], "dominance_score": 1.0,
+                   "permutation_p": float(perm_p[u]), "fdr": float(fdr[u])}
+            if desc is None:
+                wide.append({"gene": unit_names[u], "dominant_mass": 0.0,
+                             "dominant_direction": "", "dominant_fdr": float(fdr[u]),
+                             "dominance_score": np.nan})
+                continue
+            direction = "elevated" if z_obs[desc["peak_idx"], u] > 0 else "depressed"
+            desc["direction"] = direction
+            rows.append({**rec, "direction": direction,
+                         "band_start_layer": desc["start_layer"],
+                         "band_end_layer": desc["end_layer"],
+                         "band_start_um": _um(desc["start_layer"]),
+                         "band_end_um": _um(desc["end_layer"]),
+                         "width_layers": desc["width_layers"],
+                         "center_layer": desc["center_of_mass"],
+                         "center_um": _um(round(desc["center_of_mass"])),
+                         "peak_layer": desc["peak_layer"],
+                         "cluster_mass": desc["mass"],
+                         "mean_signed_effect": desc["mean_signed_effect"]})
+            wide.append({"gene": unit_names[u], "dominant_mass": desc["mass"],
+                         "dominant_direction": direction,
+                         "dominant_center": desc["center_of_mass"],
+                         "dominant_fdr": float(fdr[u]), "dominance_score": 1.0})
+        long_df = pd.DataFrame(rows)
+        wide_df = pd.DataFrame(wide)
+        return dict(thr=thr, z=z_obs, long=long_df, wide=wide_df, band_mode=band_mode)
+
+    # ---- bidirectional --------------------------------------------------------
+    obs_pos = np.zeros(n_units)
+    obs_neg = np.zeros(n_units)
+    desc_pos = [None] * n_units
+    desc_neg = [None] * n_units
+    for u in range(n_units):
+        bands = directional_cluster_bands(z_obs[:, u], thr=thr, min_w=min_w, grid=grid)
+        de, dd = bands["elevated"], bands["depressed"]
+        desc_pos[u], desc_neg[u] = de, dd
+        obs_pos[u] = de["mass"] if de else 0.0
+        obs_neg[u] = dd["mass"] if dd else 0.0
+
+    null_pos = np.zeros((n_perm, n_units), dtype=np.float32)
+    null_neg = np.zeros((n_perm, n_units), dtype=np.float32)
+    for b in _perm_iter():
+        Dp = np.empty_like(D)
+        for si in range(n_slides):
+            Dp[si] = D[si][rng.permutation(n_layers)]
+        zp = _signed_layer_z(Dp, min_per_group)
+        hp = np.nan_to_num(zp ** 2, nan=0.0)
+        supra = hp > thr
+        pos = supra & (zp > 0)
+        neg = supra & (zp < 0)
+        for u in range(n_units):
+            null_pos[b, u], _, _ = _best_band_masked(hp[:, u], pos[:, u], min_w)
+            null_neg[b, u], _, _ = _best_band_masked(hp[:, u], neg[:, u], min_w)
+
+    # plus-one directional permutation p-values (never zero)
+    p_pos = (1.0 + (null_pos >= obs_pos[None, :]).sum(0)) / (n_perm + 1.0)
+    p_neg = (1.0 + (null_neg >= obs_neg[None, :]).sum(0)) / (n_perm + 1.0)
+    p_pos = np.where(obs_pos > 0, p_pos, 1.0)
+    p_neg = np.where(obs_neg > 0, p_neg, 1.0)
+
+    # BH-FDR across all tested unit x direction hypotheses (mass > 0 only)
+    tested = []
+    pvals = []
+    for u in range(n_units):
+        if obs_pos[u] > 0:
+            tested.append((u, "elevated"))
+            pvals.append(p_pos[u])
+        if obs_neg[u] > 0:
+            tested.append((u, "depressed"))
+            pvals.append(p_neg[u])
+    fdr_map = {}
+    if pvals:
+        fdr_vals = _adjust_pvalues(np.asarray(pvals), "fdr_bh")
+        for key, q in zip(tested, fdr_vals):
+            fdr_map[key] = float(q)
+
+    rows = []
+    wide = []
+    for u in range(n_units):
+        dom = _dominance_score(obs_pos[u], obs_neg[u])
+        wrec = {"gene": unit_names[u], "dominance_score": dom}
+        for tag, desc, pv, obsm in (
+            ("elevated", desc_pos[u], p_pos[u], obs_pos[u]),
+            ("depressed", desc_neg[u], p_neg[u], obs_neg[u]),
+        ):
+            if desc is None or obsm <= 0:
+                wrec[f"{tag}_start"] = np.nan
+                wrec[f"{tag}_end"] = np.nan
+                wrec[f"{tag}_center"] = np.nan
+                wrec[f"{tag}_mass"] = 0.0
+                wrec[f"{tag}_fdr"] = np.nan
+                continue
+            q = fdr_map.get((u, tag), np.nan)
+            rows.append({
+                "gene": unit_names[u], "direction": tag,
+                "band_start_layer": desc["start_layer"],
+                "band_end_layer": desc["end_layer"],
+                "band_start_um": _um(desc["start_layer"]),
+                "band_end_um": _um(desc["end_layer"]),
+                "width_layers": desc["width_layers"],
+                "width_um": (_um(desc["end_layer"]) - _um(desc["start_layer"])),
+                "center_layer": desc["center_of_mass"],
+                "center_um": _um(round(desc["center_of_mass"])),
+                "peak_layer": desc["peak_layer"],
+                "cluster_mass": desc["mass"],
+                "mean_signed_effect": desc["mean_signed_effect"],
+                "permutation_p": float(pv),
+                "fdr": q,
+                "dominance_score": dom,
+                "analysis_window_start": float(grid[0]),
+                "analysis_window_end": float(grid[-1]),
+            })
+            wrec[f"{tag}_start"] = desc["start_layer"]
+            wrec[f"{tag}_end"] = desc["end_layer"]
+            wrec[f"{tag}_center"] = desc["center_of_mass"]
+            wrec[f"{tag}_mass"] = desc["mass"]
+            wrec[f"{tag}_fdr"] = q
+        wide.append(wrec)
+
+    long_df = pd.DataFrame(rows)
+    wide_df = pd.DataFrame(wide)
+    return dict(thr=thr, z=z_obs, long=long_df, wide=wide_df, band_mode=band_mode)

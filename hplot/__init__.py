@@ -20,7 +20,10 @@ from .plotting import (
     plot_delta_hgam,
     plot_hloci_summary,
     plot_hloci_bands,
+    plot_hloci_bands_bidirectional,
     plot_signpost,
+    build_layer_distance_map,
+    add_border_distance_axis,
 )
 from .stats import (
     compute_layer_stats,
@@ -31,6 +34,9 @@ from .stats import (
     binarize,
     cluster_mass_screen,
     compute_layer_kruskal_pvalues,
+    directional_cluster_bands,
+    gradient_cluster_mass_screen,
+    deviation_tensor,
 )
 
 __all__ = [
@@ -44,7 +50,10 @@ __all__ = [
     "plot_delta_hgam",
     "plot_hloci_summary",
     "plot_hloci_bands",
+    "plot_hloci_bands_bidirectional",
     "plot_signpost",
+    "build_layer_distance_map",
+    "add_border_distance_axis",
     "compute_layer_stats",
     "compute_layer_pvalues",
     "gam_group_curves",
@@ -53,6 +62,9 @@ __all__ = [
     "binarize",
     "cluster_mass_screen",
     "compute_layer_kruskal_pvalues",
+    "directional_cluster_bands",
+    "gradient_cluster_mass_screen",
+    "deviation_tensor",
     "pp",
     "tl",
     "pl",
