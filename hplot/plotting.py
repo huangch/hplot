@@ -983,12 +983,26 @@ def plot_hloci_summary(
     return ax
 
 
+def _alpha_ramp_cmap(color, a_lo, a_hi, n=256):
+    """Build a colormap of constant hue ``color`` whose alpha ramps ``a_lo``→``a_hi``.
+
+    Used to render a mass colorbar for the H-Loci Summary, where cluster mass
+    is encoded by opacity (alpha) at a fixed direction colour.
+    """
+    from matplotlib.colors import to_rgb, ListedColormap
+    r, g, b = to_rgb(color)
+    a = np.linspace(float(a_lo), float(a_hi), int(n))
+    return ListedColormap(
+        np.column_stack([np.full(n, r), np.full(n, g), np.full(n, b), a]))
+
+
 def plot_hloci_bands(
     band_lo,
     band_hi,
     directions,
     *,
     peak=None,
+    mass=None,
     labels=None,
     sort="outer_to_inner",
     ax=None,
@@ -997,6 +1011,7 @@ def plot_hloci_bands(
     default_color="0.6",
     bar_height=0.6,
     alpha=0.85,
+    alpha_range=None,
     edge_color="none",
     edge_width=0.0,
     peak_marker=True,
@@ -1010,6 +1025,13 @@ def plot_hloci_bands(
     ylabel=None,
     title=None,
     title_fontsize=None,
+    mass_colorbar=False,
+    mass_colorbar_label="cluster mass",
+    mass_colorbar_loc="lower right",
+    mass_colorbar_size=(1.5, 0.09),
+    mass_colorbar_pad=0.8,
+    mass_colorbar_bbox=None,
+    mass_colorbar_tags=True,
 ):
     """Draw an **H-Loci Summary (band mode)** panel from cluster-band extents.
 
@@ -1034,6 +1056,10 @@ def plot_hloci_bands(
     peak : array-like, shape (n,) | None
         Optional per-feature peak layer; when given a short vertical tick is
         drawn inside each bar at that layer.
+    mass : array-like, shape (n,) | None
+        Optional per-feature cluster mass, used **only** as the secondary sort
+        key (see ``sort``). Larger mass ranks first among rows that share the
+        same primary sort position.
     labels : sequence | None
         Row (y-tick) labels.
     sort : {"outer_to_inner", "inner_to_outer"} | None
@@ -1041,8 +1067,10 @@ def plot_hloci_bands(
         (``peak`` when supplied, else the band midpoint). ``"outer_to_inner"``
         (default) places the outermost H-Loci (stroma side, high layer L) at
         the top and the innermost (tumour interior, low L) at the bottom;
-        ``"inner_to_outer"`` reverses this. Pass ``None`` (or ``False``) to
-        keep the caller-supplied row order.
+        ``"inner_to_outer"`` reverses this. Ties on the primary key are broken
+        by descending ``mass`` (cluster mass) when supplied, else by the
+        caller-supplied row order. Pass ``None`` (or ``False``) to keep the
+        caller-supplied row order.
     ax : matplotlib.axes.Axes | None
         Axis to draw into; a new one is created when ``None``.
     up_color, down_color : str
@@ -1052,11 +1080,22 @@ def plot_hloci_bands(
     bar_height : float
         Height of each horizontal bar (in data units; rows are unit-spaced).
     alpha : float
-        Bar fill opacity.
+        Bar fill opacity when ``alpha_range`` is ``None`` (constant for every
+        bar).
+    alpha_range : tuple[float, float] | None
+        When given together with ``mass``, the per-bar opacity encodes the
+        cluster mass: the smallest mass maps to ``alpha_range[0]`` (most
+        transparent) and the largest to ``alpha_range[1]`` (most opaque), so
+        transparency becomes a magnitude channel. ``None`` (default) uses the
+        constant ``alpha`` for all bars.
     edge_color : str
         Bar edge colour. Default ``"none"``.
     edge_width : float
         Bar edge width.
+    alpha_range : tuple[float, float] | None
+        When given together with ``mass``, per-bar opacity encodes the cluster
+        mass: smallest mass -> ``alpha_range[0]`` (most transparent), largest ->
+        ``alpha_range[1]`` (most opaque). ``None`` uses the constant ``alpha``.
     peak_marker : bool
         Draw the per-feature peak tick when ``peak`` is provided.
     peak_marker_color, peak_marker_width : str, float
@@ -1071,6 +1110,38 @@ def plot_hloci_bands(
         Axis labels / title.
     title_fontsize : float | None
         Font size for the title.
+    mass_colorbar : bool
+        When ``True`` (and both ``mass`` and ``alpha_range`` are supplied), add
+        a slim colorbar for each direction present (``up_color`` for elevated,
+        ``down_color`` for depressed). Each colorbar shows the same fixed hue
+        with alpha ramping ``alpha_range[0]``→``alpha_range[1]`` across the
+        observed cluster-mass range, i.e. it is the legend for the opacity =
+        cluster-mass encoding.
+    mass_colorbar_label : str
+        Base label for the mass colorbar(s); the direction name is appended.
+    mass_colorbar_loc : str
+        Legend-style corner anchor for the colorbar block (e.g. ``"lower
+        right"``, ``"upper left"``). Used when ``mass_colorbar_bbox`` is
+        ``None``. The block is placed at a **fixed physical size** and stays
+        anchored to that corner regardless of the panel height, exactly like
+        :meth:`~matplotlib.axes.Axes.legend`.
+    mass_colorbar_size : tuple[float, float]
+        ``(width_in, strip_height_in)`` in **inches** for the colorbar block:
+        the overall width and the height of each single direction strip. Fixed
+        physical size is what keeps the block legend-sized on a very tall panel.
+    mass_colorbar_pad : float
+        Border padding (in font-size units, like a legend ``borderpad``)
+        between the colorbar block and the anchored corner.
+    mass_colorbar_bbox : tuple[float, float, float, float] | None
+        Legacy override: ``(x0, y0, width, height)`` in **axes fraction** for
+        explicit placement of the first strip (additional strips stack below).
+        When ``None`` (default) the legend-style ``mass_colorbar_loc`` /
+        ``mass_colorbar_size`` placement is used instead.
+    mass_colorbar_tags : bool
+        When ``True`` (default) write the direction name (``elevated`` /
+        ``depressed``) to the left of each strip, so the colorbar doubles as
+        the direction legend. Disable when the strips sit near the y-tick
+        labels (e.g. an upper-left placement) to avoid overlap.
 
     Returns
     -------
@@ -1088,20 +1159,32 @@ def plot_hloci_bands(
     pk = np.asarray(peak, dtype=float) if peak is not None else None
     if pk is not None and len(pk) != n:
         raise ValueError("peak must match the length of band_lo.")
+    ms = np.asarray(mass, dtype=float) if mass is not None else None
+    if ms is not None and len(ms) != n:
+        raise ValueError("mass must match the length of band_lo.")
 
     # Default row ordering by the peak centre of cluster mass. barh draws row 0
     # at the bottom and row n-1 at the top, so an ascending sort of the centre
     # puts the innermost H-Locus at the bottom and the outermost at the top —
-    # i.e. reading the panel top-to-bottom goes outer -> inner.
+    # i.e. reading the panel top-to-bottom goes outer -> inner. Ties on the
+    # centre are broken by descending cluster mass (deterministic two-key
+    # sort) when `mass` is supplied.
     if sort:
         _center = pk.copy() if pk is not None else (lo + hi) / 2.0
         _center = np.where(np.isfinite(_center), _center, -np.inf)
-        _order = np.argsort(_center, kind="stable")
-        if str(sort).replace("-", "_") == "inner_to_outer":
-            _order = _order[::-1]
+        _primary = -_center if str(sort).replace("-", "_") == "inner_to_outer" \
+            else _center
+        if ms is not None:
+            _sec = np.where(np.isfinite(ms), ms, -np.inf)
+            # lexsort: last key is primary; -_sec ascending => mass descending.
+            _order = np.lexsort((-_sec, _primary))
+        else:
+            _order = np.argsort(_primary, kind="stable")
         lo, hi, is_up = lo[_order], hi[_order], is_up[_order]
         if pk is not None:
             pk = pk[_order]
+        if ms is not None:
+            ms = ms[_order]
         if labels is not None:
             labels = [list(labels)[i] for i in _order]
 
@@ -1109,14 +1192,28 @@ def plot_hloci_bands(
         fig_h = float(np.clip(0.45 * n + 2.4, 4.0, 18.0))
         _, ax = plt.subplots(figsize=(5.8, fig_h))
 
+    # Per-bar opacity: encode cluster mass through alpha when requested,
+    # otherwise use the constant `alpha` for every bar.
+    if alpha_range is not None and ms is not None:
+        _a = np.full(n, float(alpha_range[0]), dtype=float)
+        _fin = np.isfinite(ms)
+        if _fin.any():
+            _mn, _mx = float(np.min(ms[_fin])), float(np.max(ms[_fin]))
+            if _mx > _mn:
+                _a[_fin] = np.interp(ms[_fin], (_mn, _mx), alpha_range)
+            else:
+                _a[_fin] = float(alpha_range[1])
+    else:
+        _a = np.full(n, float(alpha), dtype=float)
+
     y = np.arange(n)
-    for _yi, _lo, _hi, _up in zip(y, lo, hi, is_up):
+    for _yi, _lo, _hi, _up, _ai in zip(y, lo, hi, is_up, _a):
         if not (np.isfinite(_lo) and np.isfinite(_hi)):
             continue
         _left, _width = min(_lo, _hi), abs(_hi - _lo)
         _col = up_color if _up else down_color
         ax.barh(_yi, _width, left=_left, height=bar_height,
-                color=_col, alpha=alpha, edgecolor=edge_color,
+                color=_col, alpha=_ai, edgecolor=edge_color,
                 linewidth=edge_width, zorder=3)
     if pk is not None and peak_marker:
         for _yi, _pk in zip(y, pk):
@@ -1143,6 +1240,71 @@ def plot_hloci_bands(
             ax.set_title(title)
     if grid_axis:
         ax.grid(axis=grid_axis, color="0.9", lw=0.6)
+
+    # Mass colorbar: legend for the opacity = cluster-mass encoding. A single
+    # compact block — one thin strip per direction present (elevated red above
+    # depressed blue), sharing one mass tick-axis and one label; each strip is a
+    # fixed-hue alpha ramp over the observed mass range.
+    if mass_colorbar and ms is not None and alpha_range is not None:
+        from matplotlib.colors import Normalize
+        from matplotlib.cm import ScalarMappable
+        _fin = np.isfinite(ms)
+        if _fin.any():
+            _mn, _mx = float(np.min(ms[_fin])), float(np.max(ms[_fin]))
+            if _mx <= _mn:
+                _mx = _mn + 1.0
+            _norm = Normalize(vmin=_mn, vmax=_mx)
+            _dirs = []
+            if np.any(is_up):
+                _dirs.append(("elevated", up_color))
+            if np.any(~is_up):
+                _dirs.append(("depressed", down_color))
+
+            def _draw_strip(_cax, _name, _col, _show_ticks):
+                _cmap = _alpha_ramp_cmap(_col, alpha_range[0], alpha_range[1])
+                _sm = ScalarMappable(norm=_norm, cmap=_cmap)
+                _sm.set_array([])
+                _cb = ax.figure.colorbar(_sm, cax=_cax, orientation="horizontal")
+                _cb.ax.xaxis.set_ticks_position("bottom")
+                if _show_ticks:
+                    _cb.set_label(mass_colorbar_label, fontsize=7, labelpad=2)
+                    _cb.ax.tick_params(labelsize=6)
+                else:
+                    _cb.ax.set_xticklabels([])
+                    _cb.ax.tick_params(length=0)
+                if mass_colorbar_tags:
+                    _cb.ax.text(-0.04, 0.5, _name, transform=_cb.ax.transAxes,
+                                ha="right", va="center", fontsize=6, color=_col)
+
+            if mass_colorbar_bbox is not None:
+                # legacy: explicit axes-fraction placement, strips stacked down.
+                _bx, _by, _bw, _bh = mass_colorbar_bbox
+                for _i, (_name, _col) in enumerate(_dirs):
+                    _cax = ax.inset_axes(
+                        [_bx, _by - _i * (_bh * 1.25), _bw, _bh])
+                    _draw_strip(_cax, _name, _col, _i == len(_dirs) - 1)
+            else:
+                # legend-style placement: a fixed-inch block anchored to a
+                # corner (like Axes.legend), so it never drifts or overlaps
+                # bars as the panel height changes. One thin strip per
+                # direction, stacked inside the block.
+                from mpl_toolkits.axes_grid1.inset_locator import (
+                    inset_axes as _inset_axes)
+                _w_in, _sh_in = mass_colorbar_size
+                _n = len(_dirs)
+                _gap_in = _sh_in * 0.5
+                _tick_in = 0.30   # room under the bottom strip for ticks+label
+                _block_in = _n * _sh_in + (_n - 1) * _gap_in + _tick_in
+                _holder = _inset_axes(
+                    ax, width=_w_in, height=_block_in, loc=mass_colorbar_loc,
+                    borderpad=mass_colorbar_pad)
+                _holder.set_axis_off()
+                _sh = _sh_in / _block_in
+                _gap = _gap_in / _block_in
+                for _i, (_name, _col) in enumerate(_dirs):
+                    _y = 1.0 - (_i + 1) * _sh - _i * _gap
+                    _cax = _holder.inset_axes([0.0, _y, 1.0, _sh])
+                    _draw_strip(_cax, _name, _col, _i == len(_dirs) - 1)
     return ax
 
 

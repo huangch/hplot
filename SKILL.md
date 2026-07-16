@@ -152,6 +152,45 @@ python -m hplot.cli \
 Files are written to `<output>/<prefix>_<group>.{svg,pdf,png}`.  If `--group`
 is not specified, a single file `<prefix>_all.<format>` is produced.
 
+### 4.4 Multi-feature screen + H-Loci Summary (`screen` / `loci`)
+
+Beyond single-target plotting, the `hplot` sub-command CLI can screen **many
+features** at once and render the result as an H-Loci Summary. These are two
+separate steps on purpose: `screen` is the slow permutation stage (run once →
+ranking CSV); `loci` is the fast render (iterate freely).
+
+```bash
+# 1) slow: cluster-mass screen over every `unit` in a long CSV -> ranking table
+python -m hplot.cli screen -i long.csv \
+  --sample sample --layer layer --unit unit --value value \
+  --distance dist --grid -6 12 --baseline far_stroma \
+  --band-mode dominant --min-per-group 3 --permutations 1000 \
+  -o ranking.csv
+
+# 2) fast: render an H-Loci Summary panel from the ranking table
+python -m hplot.cli loci -i ranking.csv --kind bands \
+  --sort outer_to_inner --top-n 24 --fdr-col fdr --fdr-max 0.1 \
+  -o hloci.svg
+
+# one-shot: chain the screen inside loci from a raw long CSV
+python -m hplot.cli loci -i long.csv --screen --kind bands \
+  --sample sample --layer layer --unit unit --value value \
+  --grid -6 12 --min-per-group 3 -o hloci.png
+```
+
+| Command | Key arguments | Purpose |
+| ------- | ------------- | ------- |
+| `screen` | `--sample --layer --unit --value`, `--grid LO HI`, `--baseline window\|far_stroma\|far_tumor\|"a,b"`, `--band-mode dominant\|bidirectional`, `--permutations`, `-o ranking.csv` | Screen every feature → banded ranking table. |
+| `loci` | `--kind bands\|summary\|bidirectional`, `--sort`, `--top-n`, `--fdr-col/--fdr-max`, column-name flags, `--screen`, `-o fig.svg` | Render an H-Loci Summary from a ranking CSV. `bands` (default) = the canonical view: horizontal band bars filled by direction (`up_color`/`down_color`) with a vertical tick at the cluster-mass peak. `summary` = legacy strip+triangle view. |
+
+The `screen` ranking CSV holds one row per banded feature (`direction`,
+`band_start_layer`, `band_end_layer`, `peak_layer`, `cluster_mass`, `fdr`, and
+`*_um` distance columns when `--distance` is given), which `loci` maps onto the
+plotters. When those `*_um` columns are present, `loci` reconstructs the
+layer→µm map from them and draws the same **dual x-axis as the H-Plot curves**
+(bottom = physical distance in µm, top = border layer L, boundary at 0) —
+automatically, whether you pass a precomputed ranking CSV or chain `--screen`.
+
 ---
 
 ## 5. Python API Usage

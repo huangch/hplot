@@ -793,6 +793,48 @@ hplot gam -i data.csv [--target immune_fraction] --group hpv_status
 Outputs: effect size (Δ), Wald p-value, n; optionally per-group curve CSV.
 `--target` is required unless `--exclude-base` is given.
 
+### `hplot screen`
+
+```
+hplot screen -i long.csv --sample sample --layer layer --unit unit --value value
+             [--distance dist] [--grid LO HI] [--baseline window|far_stroma|far_tumor|"a,b"]
+             [--band-mode dominant|bidirectional] [--min-per-group 10]
+             [--permutations 1000] [--min-w 1] [--cluster-alpha 0.05] [--seed 0]
+             [-o ranking.csv] [--wide-output wide.csv]
+```
+
+Runs `gradient_cluster_mass_screen()` across **every feature** (`unit`) in a
+long `sample × layer × unit × value` CSV and writes the banded **ranking table**
+(one row per feature with a scored band: `direction`, `band_start_layer`,
+`band_end_layer`, `peak_layer`, `cluster_mass`, `fdr`, …). This is the slow
+permutation step — run it once. `--baseline` selects the deviation reference
+(`window` = per-slide window mean; `far_stroma` / `far_tumor` = tissue beyond
+the grid; `"a,b"` = an explicit layer range).
+
+### `hplot loci`
+
+```
+hplot loci -i ranking.csv [--kind bands|summary|bidirectional]
+           [--sort outer_to_inner|inner_to_outer|none] [--top-n N]
+           [--fdr-col fdr --fdr-max 0.1] [--title "..."] [-o hloci.svg]
+           [--label-col gene --lo-col band_start_layer --hi-col band_end_layer ...]
+           [--screen --sample ... --layer ... --unit ... --value ...]
+```
+
+Renders an **H-Loci Summary** panel from a ranking table (e.g. `hplot screen`
+output). The canonical view is `bands` (default): each feature is a horizontal
+band bar spanning its cluster extent, filled by direction (`up_color` for
+elevated, `down_color` for depressed), with a short vertical tick at the
+cluster-mass **peak** layer. `bidirectional` draws separate elevated + depressed
+bars per row (from a wide table); `summary` is the older strip+triangle
+rendering. When the ranking table carries `*_um` distance columns (from
+`hplot screen --distance ...`), `loci` reconstructs the layer→µm map and draws
+the same **dual x-axis as the H-Plot curves** (bottom = physical distance in µm,
+top = border layer L). Rendering is cheap and meant to be iterated (`--sort`,
+`--top-n`, `--fdr-max`, colours). Pass `--screen` to chain a screen first from a
+raw long CSV instead of a precomputed ranking table. Column-name flags
+(`--label-col`, `--lo-col`, …) let you point it at any ranking schema.
+
 ---
 
 ## Project structure
@@ -807,7 +849,7 @@ hplot/
   stats.py     — compute_layer_stats(), compute_layer_pvalues(),
                  gam_group_curves(), gam_delta_curve(), gam_pooled_effect()
   runners.py   — run_hplot_batch() batch helper
-  cli.py       — argparse CLI (hplot plot / test / gam)
+  cli.py       — argparse CLI (hplot plot / test / gam / screen / loci)
   pp.py        — AnnData preprocessing: border_layers()
   tl.py        — AnnData tool: hplot() fit -> adata.uns["hplot"]
   pl.py        — AnnData plotting: hplot(), hplot_from_csv()

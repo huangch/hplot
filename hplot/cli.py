@@ -5,6 +5,8 @@ Sub-commands
 hplot plot   — draw H-Plot curves from a CSV (batch-safe)
 hplot test   — per-layer Mann-Whitney / cluster-mass permutation test
 hplot gam    — Stage-2 GAM effect size with optional confounder adjustment
+hplot screen — multi-feature cluster-mass border-gradient screen -> ranking CSV
+hplot loci   — render an H-Loci Summary panel from a ranking CSV
 
 Usage examples
 --------------
@@ -281,6 +283,261 @@ def _add_gam_parser(sub):
     p.set_defaults(func=_cmd_gam)
 
 
+# ── screen / loci helpers ──────────────────────────────────────────────────
+
+def _pivot_slides(df, sample_col, layer_col, unit_col, value_col):
+    """Long CSV -> (values, layers, unit_names) for ``deviation_tensor``.
+
+    Returns one ``(n_layers_slide, n_units)`` value matrix and matching integer
+    layer vector per slide, with a shared unit ordering across all slides.
+    """
+    units = sorted(df[unit_col].astype(str).unique())
+    values, layers = [], []
+    for _sid, g in df.groupby(sample_col, sort=True):
+        piv = (g.pivot_table(index=layer_col, columns=unit_col, values=value_col,
+                             aggfunc="mean")
+                .reindex(columns=units))
+        piv = piv.sort_index()
+        values.append(piv.to_numpy(dtype=float))
+        layers.append(piv.index.to_numpy().astype(int))
+    return values, layers, units
+
+
+def _run_screen_from_csv(args):
+    """Shared screen driver used by ``hplot screen`` and ``hplot loci --screen``.
+
+    Returns ``(long_df, wide_df, layer_um)``.
+    """
+    from hplot.stats import deviation_tensor, gradient_cluster_mass_screen
+    df = pd.read_csv(args.input)
+    values, layers, units = _pivot_slides(
+        df, args.sample, args.layer, args.unit, args.value)
+
+    if args.grid:
+        grid = np.arange(int(args.grid[0]), int(args.grid[1]) + 1)
+    else:
+        allL = np.concatenate([lay for lay in layers if lay.size])
+        grid = np.arange(int(allL.min()), int(allL.max()) + 1)
+
+    baseline = args.baseline
+    if baseline not in ("window", "far_stroma", "far_tumor"):
+        a, b = baseline.split(",")
+        baseline = (int(a), int(b))
+
+    layer_um = None
+    if args.distance:
+        acc = {}
+        for _L, _d in zip(df[args.layer].to_numpy().astype(int),
+                          df[args.distance].to_numpy(dtype=float)):
+            acc.setdefault(int(_L), []).append(float(_d))
+        layer_um = {L: float(np.mean(v)) for L, v in acc.items()}
+
+    D = deviation_tensor(values, layers, grid, baseline_window=baseline,
+                         min_baseline_layers=args.min_baseline_layers)
+    res = gradient_cluster_mass_screen(
+        D, grid, unit_names=units, band_mode=args.band_mode,
+        cluster_alpha=args.cluster_alpha, min_w=args.min_w,
+        min_per_group=args.min_per_group, n_perm=args.permutations,
+        seed=args.seed, layer_um=layer_um, progress=args.progress,
+    )
+    return res["long"], res["wide"], layer_um
+
+
+def _add_screen_args(p):
+    """Column / screen options shared by ``screen`` and ``loci --screen``."""
+    p.add_argument("--sample", default="sample", help="Slide/sample id column.")
+    p.add_argument("--layer",  default="layer",  help="Signed layer index column.")
+    p.add_argument("--unit",   default="unit",
+                   help="Feature column (gene / LR pair / cell type).")
+    p.add_argument("--value",  default="value",  help="Per-layer value column.")
+    p.add_argument("--distance", default=None,
+                   help="Physical-distance (µm) column; enables *_um outputs.")
+    p.add_argument("--grid", nargs=2, type=int, default=None, metavar=("LO", "HI"),
+                   help="Analysis-window layer range (default: data min..max).")
+    p.add_argument("--baseline", default="window",
+                   help="Baseline region: window | far_stroma | far_tumor | 'a,b'.")
+    p.add_argument("--min-baseline-layers", dest="min_baseline_layers",
+                   type=int, default=3,
+                   help="Min baseline-region layers per slide (default 3).")
+    p.add_argument("--band-mode", dest="band_mode", default="dominant",
+                   choices=["dominant", "bidirectional"],
+                   help="Winner-take-all (dominant) or per-direction bands.")
+    p.add_argument("--cluster-alpha", dest="cluster_alpha", type=float, default=0.05,
+                   help="Cluster-forming alpha (chi2 threshold; default 0.05).")
+    p.add_argument("--min-w", dest="min_w", type=int, default=1,
+                   help="Minimum contiguous band width in layers (default 1).")
+    p.add_argument("--min-per-group", dest="min_per_group", type=int, default=10,
+                   help="Minimum contributing slides per layer (default 10).")
+    p.add_argument("--permutations", type=int, default=1000,
+                   help="Layer-shuffle permutations (default 1000).")
+    p.add_argument("--seed", type=int, default=0, help="Random seed (default 0).")
+    p.add_argument("--progress", action="store_true",
+                   help="Show a tqdm bar over permutations.")
+
+
+# ── screen ─────────────────────────────────────────────────────────────────
+
+def _cmd_screen(args):
+    long_df, wide_df, _ = _run_screen_from_csv(args)
+    long_df.to_csv(args.output, index=False)
+    n_band = len(long_df)
+    print(f"[hplot screen]  ranking table ({n_band} banded rows) -> {args.output}")
+    if args.wide_output is not None:
+        wide_df.to_csv(args.wide_output, index=False)
+        print(f"[hplot screen]  wide table -> {args.wide_output}")
+
+
+def _add_screen_parser(sub):
+    p = sub.add_parser(
+        "screen",
+        help="Multi-feature cluster-mass border-gradient screen -> ranking CSV.",
+        description=(
+            "Run gradient_cluster_mass_screen() across every feature in a long "
+            "CSV (sample x layer x unit x value) and write the banded ranking "
+            "table consumed by 'hplot loci'."
+        ),
+    )
+    p.add_argument("-i", "--input", required=True,
+                   help="Long CSV: sample, layer, unit, value columns.")
+    _add_screen_args(p)
+    p.add_argument("-o", "--output", default="ranking.csv",
+                   help="Output ranking CSV (one row per banded feature).")
+    p.add_argument("--wide-output", dest="wide_output", default=None,
+                   help="Optional CSV for the per-feature wide table.")
+    p.set_defaults(func=_cmd_screen)
+
+
+# ── loci ───────────────────────────────────────────────────────────────────
+
+def _layer_um_from_ranking(df):
+    """Reconstruct a ``{layer L: physical distance µm}`` map from a ranking
+    table using its (layer, µm) column pairs, so 'hplot loci' can draw the
+    same dual x-axis as the H-Plot curves without re-reading the raw data.
+    Returns ``None`` when no usable pair is present."""
+    import hplot
+    pairs = [("band_start_layer", "band_start_um"),
+             ("band_end_layer", "band_end_um"),
+             ("center_layer", "center_um"),
+             ("peak_layer", "peak_um")]
+    layers, dists = [], []
+    for lcol, ucol in pairs:
+        if lcol in df.columns and ucol in df.columns:
+            layers.append(pd.to_numeric(df[lcol], errors="coerce").to_numpy())
+            dists.append(pd.to_numeric(df[ucol], errors="coerce").to_numpy())
+    if not layers:
+        return None
+    L = np.concatenate(layers)
+    U = np.concatenate(dists)
+    ok = np.isfinite(L) & np.isfinite(U)
+    if not ok.any():
+        return None
+    return hplot.build_layer_distance_map(L[ok], U[ok])
+
+
+def _cmd_loci(args):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import hplot
+
+    if args.screen:
+        long_df, wide_df, layer_um = _run_screen_from_csv(args)
+        df = wide_df if args.kind == "bidirectional" else long_df
+    else:
+        df = pd.read_csv(args.input)
+        layer_um = _layer_um_from_ranking(df)
+
+    if args.fdr_col and args.fdr_max is not None and args.fdr_col in df.columns:
+        df = df[df[args.fdr_col] <= args.fdr_max]
+    if args.top_n and args.mass_col in df.columns:
+        df = df.sort_values(args.mass_col, ascending=False).head(args.top_n)
+    if df.empty:
+        raise SystemExit("hplot loci: no rows to plot after filtering.")
+
+    sort = None if args.sort == "none" else args.sort
+    n = len(df)
+    fig_h = float(np.clip(0.45 * n + 2.4, 4.0, 24.0))
+    fig, ax = plt.subplots(figsize=(args.width, fig_h))
+
+    if args.kind == "bands":
+        hplot.plot_hloci_bands(
+            df[args.lo_col], df[args.hi_col], df[args.dir_col],
+            peak=df[args.peak_col] if args.peak_col in df.columns else None,
+            mass=df[args.mass_col] if args.mass_col in df.columns else None,
+            labels=df[args.label_col], sort=sort, ax=ax,
+            xlabel="border layer L", title=args.title)
+    elif args.kind == "summary":
+        hplot.plot_hloci_summary(
+            df[args.peak_col], df[args.dir_col],
+            weights=df[args.mass_col] if args.mass_col in df.columns else None,
+            labels=df[args.label_col], ax=ax,
+            xlabel="border layer L", title=args.title)
+    else:  # bidirectional (wide schema)
+        hplot.plot_hloci_bands_bidirectional(
+            df[args.label_col],
+            df["elevated_start"], df["elevated_end"],
+            df["depressed_start"], df["depressed_end"],
+            elev_center=df.get("elevated_center"),
+            depr_center=df.get("depressed_center"),
+            elev_mass=df.get("elevated_mass"),
+            depr_mass=df.get("depressed_mass"),
+            sort_by=None if sort is None else "dominant_center",
+            ax=ax, title=args.title)
+
+    if layer_um is not None:
+        hplot.add_border_distance_axis(ax, layer_um)
+
+    fig.tight_layout()
+    fig.savefig(args.output, dpi=args.dpi, bbox_inches="tight")
+    print(f"[hplot loci]  {args.kind} panel ({n} rows) -> {args.output}")
+
+
+def _add_loci_parser(sub):
+    p = sub.add_parser(
+        "loci",
+        help="Render an H-Loci Summary panel from a ranking CSV.",
+        description=(
+            "Draw an H-Loci Summary from a ranking table (e.g. 'hplot screen' "
+            "output). The canonical 'bands' view draws each feature as a "
+            "horizontal band coloured by direction (up_color=elevated, "
+            "down_color=depressed) with a vertical tick at the cluster-mass "
+            "peak; 'bidirectional' splits elevated/depressed bars per row; "
+            "'summary' is the legacy strip+triangle view. Pass --screen to run "
+            "the screen first from a raw long CSV."),
+    )
+    p.add_argument("-i", "--input", required=True,
+                   help="Ranking CSV (or raw long CSV when --screen is set).")
+    p.add_argument("-o", "--output", default="hloci.svg",
+                   help="Output figure path (.svg/.pdf/.png).")
+    p.add_argument("--kind", default="bands",
+                   choices=["bands", "summary", "bidirectional"],
+                   help="Panel style: bands (default, canonical band view) | "
+                        "bidirectional | summary (legacy strip+triangle).")
+    p.add_argument("--sort", default="outer_to_inner",
+                   choices=["outer_to_inner", "inner_to_outer", "none"],
+                   help="Row ordering by band centre (default outer_to_inner).")
+    p.add_argument("--top-n", dest="top_n", type=int, default=None,
+                   help="Keep the top-N rows by cluster mass before drawing.")
+    p.add_argument("--width", type=float, default=6.4, help="Figure width (in).")
+    p.add_argument("--dpi", type=int, default=300, help="Raster DPI (default 300).")
+    p.add_argument("--title", default=None, help="Panel title.")
+    # ranking-table column names (defaults match 'hplot screen' output)
+    p.add_argument("--label-col", dest="label_col", default="gene")
+    p.add_argument("--lo-col",   dest="lo_col",   default="band_start_layer")
+    p.add_argument("--hi-col",   dest="hi_col",   default="band_end_layer")
+    p.add_argument("--dir-col",  dest="dir_col",  default="direction")
+    p.add_argument("--peak-col", dest="peak_col", default="peak_layer")
+    p.add_argument("--mass-col", dest="mass_col", default="cluster_mass")
+    p.add_argument("--fdr-col",  dest="fdr_col",  default="fdr")
+    p.add_argument("--fdr-max",  dest="fdr_max",  type=float, default=None,
+                   help="Drop rows with FDR above this before drawing.")
+    # optional: chain the screen from a raw long CSV
+    p.add_argument("--screen", action="store_true",
+                   help="Run 'hplot screen' first (input is a raw long CSV).")
+    _add_screen_args(p)
+    p.set_defaults(func=_cmd_loci)
+
+
 # ── entry point ───────────────────────────────────────────────────────────
 
 def main(argv=None):
@@ -293,6 +550,8 @@ def main(argv=None):
             "  plot   Draw H-Plot curves from a CSV.",
             "  test   Per-layer Mann-Whitney + cluster-mass permutation test.",
             "  gam    Stage-2 GAM effect size with confounder adjustment.",
+            "  screen Multi-feature cluster-mass screen -> ranking CSV.",
+            "  loci   Render an H-Loci Summary panel from a ranking CSV.",
             "",
             "Run  hplot <sub-command> --help  for full options.",
         ]),
@@ -301,6 +560,8 @@ def main(argv=None):
     _add_plot_parser(sub)
     _add_test_parser(sub)
     _add_gam_parser(sub)
+    _add_screen_parser(sub)
+    _add_loci_parser(sub)
 
     args = parser.parse_args(argv)
     if args.command is None:
