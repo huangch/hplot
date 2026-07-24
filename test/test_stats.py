@@ -358,5 +358,27 @@ class TestBidirectionalPlot(unittest.TestCase):
         self.assertEqual(len(ax.get_yticklabels()), 3)
 
 
+class TestHlociFdrSummary(unittest.TestCase):
+    def test_plot_smoke_and_stop_label(self):
+        import matplotlib
+        matplotlib.use("Agg")
+        from hplot.plotting import plot_hloci_fdr_summary
+
+        rank = pd.DataFrame({
+            "feature": ["A", "B", "C", "excluded"],
+            "band_lo": [-4, -1, 2, 1],
+            "band_hi": [-2, 1, 5, 2],
+            "peak_layer": [-3, 0, 3, float("nan")],
+            "cluster_mass": [4.0, 7.0, 2.0, 0.0],
+            "fdr_global": [0.02, 0.001, 0.04, 1.0],
+        })
+        result = plot_hloci_fdr_summary(
+            rank, "feature", stop_label="A", layer_limits=(-5, 5),
+            layer_to_distance={-4: -80, -1: -20, 0: 0, 2: 40, 5: 100},
+        )
+        self.assertEqual(result["selected"]["feature"].tolist(), ["A", "B"])
+        self.assertEqual(len(result["band_axis"].get_yticklabels()), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

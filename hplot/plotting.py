@@ -1399,6 +1399,192 @@ def add_border_distance_axis(
     return top
 
 
+def plot_hloci_fdr_summary(
+    rank,
+    label_col,
+    *,
+    band_lo_col="band_lo",
+    band_hi_col="band_hi",
+    peak_col="peak_layer",
+    mass_col="cluster_mass",
+    fdr_col="fdr_global",
+    direction_col=None,
+    top_n=50,
+    stop_label=None,
+    layer_limits=None,
+    layer_to_distance=None,
+    fdr_threshold=0.05,
+    up_color="#e6550d",
+    down_color="#756bb1",
+    alpha_range=(0.25, 0.9),
+    analyte_label="features",
+    contrast_label=None,
+    n_groups=None,
+    n_samples=None,
+    fig=None,
+    savepath=None,
+    dpi=240,
+):
+    """Plot the complete H-Loci band and FDR summary from a ranking table.
+
+    The input table is typically the ``long`` output of
+    :func:`hplot.gradient_cluster_mass_screen`, augmented with feature names.
+    It must contain one row per feature and the selected band extent, peak,
+    cluster mass, and global FDR. The function selects features with a valid,
+    non-zero band, ranks them by FDR, and creates the two-panel summary used
+    to compare many H-Loci at once: coloured band spans on the left and
+    ``-log10(FDR)`` on the right.
+
+    Parameters
+    ----------
+    rank : pandas.DataFrame
+        Feature-level H-Locus ranking table.
+    label_col : str
+        Column containing feature labels.
+    stop_label : str | None
+        Include ranked rows through this label, inclusive. If the label is not
+        present among eligible rows, ``top_n`` rows are used instead.
+    layer_to_distance : Mapping[int, float] | None
+        Optional physical-distance map from :func:`build_layer_distance_map`.
+        When supplied, the band panel receives physical-distance tick labels.
+    savepath : str | pathlib.Path | None
+        Optional PNG output path. An SVG sibling is also written.
+
+    Returns
+    -------
+    dict
+        ``{"figure", "band_axis", "fdr_axis", "colorbar_axis", "selected"}``.
+    """
+    from pathlib import Path
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colors import ListedColormap, Normalize, to_rgb
+
+    required = {label_col, band_lo_col, band_hi_col, peak_col, mass_col, fdr_col}
+    missing = required.difference(rank.columns)
+    if missing:
+        raise ValueError(f"rank is missing required columns: {sorted(missing)}")
+
+    candidates = rank.loc[
+        rank[peak_col].notna() & (rank[mass_col].astype(float) > 0)
+    ].copy()
+    n_candidates = len(candidates)
+    ranked = candidates.sort_values(fdr_col, ascending=True)
+    if stop_label is not None and (ranked[label_col] == stop_label).any():
+        stop_index = np.flatnonzero((ranked[label_col] == stop_label).to_numpy())[0]
+        selected = ranked.iloc[: stop_index + 1].copy()
+    else:
+        selected = ranked.head(top_n).copy()
+    selected = selected.sort_values([peak_col, mass_col], ascending=[True, True]).reset_index(drop=True)
+    if selected.empty:
+        raise ValueError("No H-Loci with a valid peak and positive cluster mass were found.")
+
+    n_rows = len(selected)
+    fig_height = float(np.clip(0.16 * n_rows + 2.0, 4.0, 30.0))
+    if fig is None:
+        fig = plt.figure(figsize=(9.6, fig_height + 1.0))
+    grid = fig.add_gridspec(
+        2, 2, width_ratios=[3, 1], height_ratios=[fig_height, 1.0],
+        wspace=0.04, hspace=0.12,
+    )
+    band_axis = fig.add_subplot(grid[0, 0])
+    fdr_axis = fig.add_subplot(grid[0, 1], sharey=band_axis)
+    colorbar_axis = fig.add_subplot(grid[1, 0])
+    colorbar_axis.set_axis_off()
+
+    directions = (
+        selected[direction_col].to_numpy()
+        if direction_col is not None else selected[peak_col].to_numpy(dtype=float) >= 0
+    )
+    title_parts = ["Between-group divergence"]
+    if contrast_label:
+        title_parts.append(str(contrast_label))
+    title_parts.append(f"top {n_rows} {analyte_label} by FDR")
+    if n_groups is not None:
+        title_parts.append(f"{n_groups} groups")
+    if n_samples is not None:
+        title_parts.append(f"pooled {n_samples} samples")
+    plot_hloci_bands(
+        selected[band_lo_col].to_numpy(dtype=float),
+        selected[band_hi_col].to_numpy(dtype=float),
+        directions,
+        peak=selected[peak_col].to_numpy(dtype=float),
+        mass=selected[mass_col].to_numpy(dtype=float),
+        labels=selected[label_col],
+        sort=None,
+        up_color=up_color,
+        down_color=down_color,
+        alpha_range=alpha_range,
+        mass_colorbar=False,
+        ax=band_axis,
+        xlabel="",
+        ylabel=f"top {n_rows} {analyte_label} by FDR (sorted by band centre)",
+        title="\n".join([title_parts[0], " · ".join(title_parts[1:])]),
+        title_fontsize=11,
+    )
+    band_axis.tick_params(axis="y", labelsize=6)
+    if layer_limits is not None:
+        band_axis.set_xlim(*layer_limits)
+    if layer_to_distance is not None:
+        add_border_distance_axis(band_axis, layer_to_distance)
+
+    y = np.arange(n_rows)
+    fdr = np.clip(selected[fdr_col].to_numpy(dtype=float), 1e-300, 1.0)
+    fdr_axis.barh(y, -np.log10(fdr), height=0.6, color="0.55", alpha=0.85, zorder=3)
+    fdr_axis.axvline(-np.log10(fdr_threshold), ls="--", lw=1.0, color="0.35", zorder=2,
+                       label=f"FDR = {fdr_threshold:g}")
+    fdr_axis.set_xlabel(r"$-\log_{10}$ FDR")
+    fdr_axis.set_title("significance", fontsize=11)
+    fdr_axis.grid(axis="x", ls=":", lw=0.6, color="0.85", zorder=0)
+    fdr_axis.tick_params(labelleft=False)
+    fdr_axis.legend(frameon=False, fontsize=7, loc="lower right")
+
+    mass = selected[mass_col].to_numpy(dtype=float)
+    mass_min, mass_max = float(mass.min()), float(mass.max())
+    norm = Normalize(vmin=mass_min, vmax=mass_max if mass_max > mass_min else mass_min + 1.0)
+
+    def _ramp(color, n=256):
+        red, green, blue = to_rgb(color)
+        alpha = np.linspace(alpha_range[0], alpha_range[1], n)
+        return ListedColormap(np.column_stack([
+            np.full(n, red), np.full(n, green), np.full(n, blue), alpha,
+        ]))
+
+    peak = selected[peak_col].to_numpy(dtype=float)
+    directions_for_colorbar = []
+    if np.any(peak >= 0):
+        directions_for_colorbar.append(("stroma (L >= 0)", up_color))
+    if np.any(peak < 0):
+        directions_for_colorbar.append(("tumour (L < 0)", down_color))
+    for index, (name, color) in enumerate(directions_for_colorbar):
+        x0 = (0.04, 0.58)[min(index, 1)]
+        color_axis = colorbar_axis.inset_axes([x0, 0.60, 0.34, 0.14])
+        mapper = ScalarMappable(norm=norm, cmap=_ramp(color))
+        mapper.set_array([])
+        colorbar = fig.colorbar(mapper, cax=color_axis, orientation="horizontal")
+        colorbar.ax.xaxis.set_ticks_position("bottom")
+        colorbar.set_label("cluster mass", fontsize=6, labelpad=-1)
+        colorbar.ax.tick_params(labelsize=6, length=2, pad=1)
+        colorbar_axis.text(
+            x0 + 0.17, 0.84, name, transform=colorbar_axis.transAxes,
+            ha="center", va="bottom", fontsize=8, color=color, fontweight="bold",
+        )
+
+    if savepath is not None:
+        output = Path(savepath)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(output, dpi=dpi, bbox_inches="tight")
+        fig.savefig(output.with_suffix(".svg"), bbox_inches="tight")
+
+    return {
+        "figure": fig,
+        "band_axis": band_axis,
+        "fdr_axis": fdr_axis,
+        "colorbar_axis": colorbar_axis,
+        "selected": selected,
+        "n_candidates": n_candidates,
+    }
+
+
 def _hloci_bidir_order(n, elev_center, depr_center, elev_mass, depr_mass, sort_by):
     """Row ordering for the bidirectional H-Loci Summary.
 
