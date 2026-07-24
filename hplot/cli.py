@@ -320,7 +320,7 @@ def _run_screen_from_csv(args):
         grid = np.arange(int(allL.min()), int(allL.max()) + 1)
 
     baseline = args.baseline
-    if baseline not in ("window", "far_stroma", "far_tumor"):
+    if baseline not in ("window", "far", "core"):
         a, b = baseline.split(",")
         baseline = (int(a), int(b))
 
@@ -355,7 +355,7 @@ def _add_screen_args(p):
     p.add_argument("--grid", nargs=2, type=int, default=None, metavar=("LO", "HI"),
                    help="Analysis-window layer range (default: data min..max).")
     p.add_argument("--baseline", default="window",
-                   help="Baseline region: window | far_stroma | far_tumor | 'a,b'.")
+                   help="Baseline region: window | far | core | 'a,b'.")
     p.add_argument("--min-baseline-layers", dest="min_baseline_layers",
                    type=int, default=3,
                    help="Min baseline-region layers per slide (default 3).")

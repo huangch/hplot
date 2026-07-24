@@ -1096,11 +1096,12 @@ def deviation_tensor(values, layers, grid, *, baseline_window=None,
     * ``None`` or ``"window"`` — baseline = mean over the slide's layers that
       fall inside ``grid`` (the historical default; deviations are relative to
       the slide's own window-wide level);
-    * ``"far_stroma"`` — baseline = mean over the slide's layers beyond the
-      stroma end of ``grid`` (``L > max(grid)``), i.e. tissue away from the
-      tumour on the stromal side (a "healthy tissue" reference);
-    * ``"far_tumor"`` — baseline = mean over the slide's layers beyond the
-      tumour end of ``grid`` (``L < min(grid)``);
+    * ``"far"`` — baseline = mean over the slide's layers beyond the
+      outer end of ``grid`` (``L > max(grid)``), i.e. the distal far-field
+      away from the base object (a "resting tissue" reference);
+    * ``"core"`` — baseline = mean over the slide's layers beyond the
+      interior end of ``grid`` (``L < min(grid)``), i.e. deep inside the
+      base object;
     * ``(a, b)`` — baseline = mean over the slide's layers with
       ``a <= L <= b`` (an explicit reference window).
 
@@ -1116,14 +1117,15 @@ def deviation_tensor(values, layers, grid, *, baseline_window=None,
         Integer layer coordinate for every row of the matching ``values``.
     grid : array-like, ``(n_layers,)``
         Layer coordinates of the analysis window (the tested layers).
-    baseline_window : None | "window" | "far_stroma" | "far_tumor" | (int, int)
-        Baseline reference-region selector (see above). Default ``None``.
+    baseline_window : None | "window" | "far" | "core" | (int, int)
+        Baseline reference-region selector (see above). Default ``None``
+        (self-centre over the analysis window).
     min_baseline_layers : int
         Minimum number of baseline-region layers a slide must contribute; a
         slide below this is skipped (all-NaN). Default 3 (a 3-layer average
         roughly halves the baseline noise vs a single layer). The default
         ``"window"`` baseline is almost always well above this, so raising it
-        mainly guards the sparser ``"far_stroma"`` / ``"far_tumor"`` references.
+        mainly guards the sparser ``"far"`` / ``"core"`` references.
     verbose : bool
         Print a one-line warning when one or more slides are skipped for an
         insufficient baseline region. Default True.
@@ -1137,6 +1139,8 @@ def deviation_tensor(values, layers, grid, *, baseline_window=None,
     nG = grid.size
     gpos = {int(L): i for i, L in enumerate(grid)}
     lo, hi = int(grid.min()), int(grid.max())
+
+    bw = baseline_window
     n_slides = len(values)
     if len(layers) != n_slides:
         raise ValueError("values and layers must have the same length.")
@@ -1151,18 +1155,18 @@ def deviation_tensor(values, layers, grid, *, baseline_window=None,
         raise ValueError("no slide contributes any values.")
 
     def _baseline_mask(lay):
-        if baseline_window is None or baseline_window == "window":
+        if bw is None or bw == "window":
             return np.array([int(L) in gpos for L in lay], dtype=bool)
-        if baseline_window == "far_stroma":
+        if bw == "far":
             return lay > hi
-        if baseline_window == "far_tumor":
+        if bw == "core":
             return lay < lo
         try:
-            a, b = baseline_window
+            a, b = bw
         except (TypeError, ValueError):
             raise ValueError(
-                "baseline_window must be None, 'window', 'far_stroma', "
-                "'far_tumor', or an (a, b) tuple.")
+                "baseline_window must be None, 'window', 'far', 'core', "
+                "or an (a, b) tuple.")
         return (lay >= int(a)) & (lay <= int(b))
 
     D = np.full((n_slides, nG, n_units), np.nan, dtype=float)
@@ -1184,7 +1188,7 @@ def deviation_tensor(values, layers, grid, *, baseline_window=None,
             if gi is not None:
                 D[si, gi] = V[k] - base
     if verbose and n_skip_base:
-        region = baseline_window if baseline_window is not None else "window"
+        region = bw if bw is not None else "window"
         print(f"\u26a0 deviation_tensor: skipped {n_skip_base}/{n_data} slide(s) "
               f"with < {min_baseline_layers} baseline layer(s) in {region!r} "
               f"region (excluded from the pooled statistic).")

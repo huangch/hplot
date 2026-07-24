@@ -296,20 +296,20 @@ class TestDeviationTensor(unittest.TestCase):
         # slide1 baseline = mean(1..5)=3 -> deviations -2,-1,0,1,2.
         self.assertTrue(np.allclose(D[1, :, 0], [-2, -1, 0, 1, 2]))
 
-    def test_far_stroma_baseline(self):
+    def test_far_baseline(self):
         D = deviation_tensor(self.values, self.layers, self.grid,
-                             baseline_window="far_stroma", min_baseline_layers=1,
+                             baseline_window="far", min_baseline_layers=1,
                              verbose=False)
-        # slide0 far-stroma layers (3,4) values = 100 -> baseline 100.
+        # slide0 far layers (3,4) values = 100 -> baseline 100.
         self.assertTrue(np.allclose(D[0, :, 0], 10.0 - 100.0))
-        # slide1 has no far-stroma layers -> skipped (NaN).
+        # slide1 has no far layers -> skipped (NaN).
         self.assertTrue(np.all(np.isnan(D[1, :, 0])))
 
-    def test_far_tumor_baseline(self):
+    def test_core_baseline(self):
         D = deviation_tensor(self.values, self.layers, self.grid,
-                             baseline_window="far_tumor", min_baseline_layers=1,
+                             baseline_window="core", min_baseline_layers=1,
                              verbose=False)
-        # slide0 far-tumor layers (-4,-3) values = 0 -> baseline 0 -> dev = 10.
+        # slide0 core layers (-4,-3) values = 0 -> baseline 0 -> dev = 10.
         self.assertTrue(np.allclose(D[0, :, 0], 10.0))
         self.assertTrue(np.all(np.isnan(D[1, :, 0])))
 
@@ -322,9 +322,9 @@ class TestDeviationTensor(unittest.TestCase):
         self.assertTrue(np.allclose(D[1, :, 0], np.array([1, 2, 3, 4, 5]) - 4.5))
 
     def test_min_baseline_layers_skips_slide(self):
-        # far_stroma slide0 has exactly 2 far layers; require 3 -> both skipped.
+        # far slide0 has exactly 2 far layers; require 3 -> both skipped.
         D = deviation_tensor(self.values, self.layers, self.grid,
-                             baseline_window="far_stroma", min_baseline_layers=3,
+                             baseline_window="far", min_baseline_layers=3,
                              verbose=False)
         self.assertTrue(np.all(np.isnan(D)))
 
@@ -333,7 +333,7 @@ class TestDeviationTensor(unittest.TestCase):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             deviation_tensor(self.values, self.layers, self.grid,
-                             baseline_window="far_stroma", min_baseline_layers=1,
+                             baseline_window="far", min_baseline_layers=3,
                              verbose=True)
         self.assertIn("skipped", buf.getvalue())
 
