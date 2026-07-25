@@ -824,6 +824,33 @@ def _hloci_up_mask(directions):
     return np.array([str(v).strip().lower() in up_tokens for v in arr], dtype=bool)
 
 
+def _hloci_dir_code(directions):
+    """Coerce a per-row direction spec into an int code: ``+1`` up, ``-1`` down,
+    ``0`` neutral.
+
+    Numeric input uses the sign of the value, with ``0`` and ``NaN`` mapping to
+    neutral (``0``) — so a group comparison with no signed direction (e.g. a
+    4-arm Kruskal–Wallis screen, where every row is ``0``/``NaN``) renders in
+    the neutral ``default_color`` rather than being forced up or down. Boolean
+    input stays two-state (``True`` -> up, ``False`` -> down; no neutral), which
+    preserves the behaviour of callers that pass a side mask. String tokens map
+    ``elevated``/``up``/… -> up, ``depressed``/``down``/… -> down, and blank or
+    unrecognised tokens -> neutral.
+    """
+    arr = np.asarray(directions)
+    if arr.dtype == bool:
+        return np.where(arr, 1, -1).astype(int)
+    if np.issubdtype(arr.dtype, np.number):
+        return np.sign(np.nan_to_num(arr.astype(float), nan=0.0)).astype(int)
+    up_tokens = {"elevated", "up", "high", "pos", "positive", "+", "1", "true"}
+    down_tokens = {"depressed", "down", "low", "neg", "negative", "-"}
+    codes = []
+    for v in arr:
+        s = str(v).strip().lower()
+        codes.append(1 if s in up_tokens else (-1 if s in down_tokens else 0))
+    return np.asarray(codes, dtype=int)
+
+
 def plot_hloci_summary(
     positions,
     directions,
@@ -1050,9 +1077,14 @@ def plot_hloci_bands(
         Lower / upper layer bounds of each feature's scored cluster band. Rows
         with a non-finite bound are skipped.
     directions : array-like, shape (n,)
-        Per-feature direction, coerced by :func:`_hloci_up_mask` (accepts
-        ``"elevated"``/``"depressed"``, bool, or signed numeric). ``up`` rows
-        are filled with ``up_color``, ``down`` rows with ``down_color``.
+        Per-feature direction, coerced by :func:`_hloci_dir_code` into a
+        three-state code. Numeric input uses the sign of the value: ``> 0`` rows
+        are filled with ``up_color``, ``< 0`` rows with ``down_color``, and
+        ``0``/``NaN`` rows with ``default_color`` (neutral) — so a group screen
+        with no signed direction (e.g. a 4-arm Kruskal–Wallis screen) renders
+        neutral instead of being forced up or down. Boolean input stays
+        two-state (``True`` -> up, ``False`` -> down); string tokens map
+        ``elevated``/``up`` -> up, ``depressed``/``down`` -> down, else neutral.
     peak : array-like, shape (n,) | None
         Optional per-feature peak layer; when given a short vertical tick is
         drawn inside each bar at that layer.
@@ -1153,7 +1185,7 @@ def plot_hloci_bands(
     n = len(lo)
     if len(hi) != n:
         raise ValueError("band_lo and band_hi must have the same length.")
-    is_up = _hloci_up_mask(directions)
+    is_up = _hloci_dir_code(directions)
     if len(is_up) != n:
         raise ValueError("directions must match the length of band_lo.")
     pk = np.asarray(peak, dtype=float) if peak is not None else None
@@ -1211,7 +1243,7 @@ def plot_hloci_bands(
         if not (np.isfinite(_lo) and np.isfinite(_hi)):
             continue
         _left, _width = min(_lo, _hi), abs(_hi - _lo)
-        _col = up_color if _up else down_color
+        _col = up_color if _up > 0 else (down_color if _up < 0 else default_color)
         ax.barh(_yi, _width, left=_left, height=bar_height,
                 color=_col, alpha=_ai, edgecolor=edge_color,
                 linewidth=edge_width, zorder=3)
@@ -1255,10 +1287,12 @@ def plot_hloci_bands(
                 _mx = _mn + 1.0
             _norm = Normalize(vmin=_mn, vmax=_mx)
             _dirs = []
-            if np.any(is_up):
+            if np.any(is_up > 0):
                 _dirs.append(("elevated", up_color))
-            if np.any(~is_up):
+            if np.any(is_up < 0):
                 _dirs.append(("depressed", down_color))
+            if np.any(is_up == 0):
+                _dirs.append(("neutral", default_color))
 
             def _draw_strip(_cax, _name, _col, _show_ticks):
                 _cmap = _alpha_ramp_cmap(_col, alpha_range[0], alpha_range[1])
@@ -1344,7 +1378,7 @@ def add_border_distance_axis(
     layer_to_distance,
     *,
     max_ticks=9,
-    distance_label="physical distance from border (µm)  (<0 tumour | \u2265 0 stroma)",
+    distance_label="physical distance from border (µm)  (\u2264 0 tumour | > 0 stroma)",
     layer_label="border layer L",
     distance_fmt="{:.0f}",
     add_top_axis=True,
@@ -1493,7 +1527,7 @@ def plot_hloci_fdr_summary(
 
     directions = (
         selected[direction_col].to_numpy()
-        if direction_col is not None else selected[peak_col].to_numpy(dtype=float) >= 0
+        if direction_col is not None else selected[peak_col].to_numpy(dtype=float) > 0
     )
     title_parts = ["Between-group divergence"]
     if contrast_label:
@@ -1551,10 +1585,10 @@ def plot_hloci_fdr_summary(
 
     peak = selected[peak_col].to_numpy(dtype=float)
     directions_for_colorbar = []
-    if np.any(peak >= 0):
-        directions_for_colorbar.append(("stroma (L >= 0)", up_color))
-    if np.any(peak < 0):
-        directions_for_colorbar.append(("tumour (L < 0)", down_color))
+    if np.any(peak > 0):
+        directions_for_colorbar.append(("stroma (L > 0)", up_color))
+    if np.any(peak <= 0):
+        directions_for_colorbar.append(("tumour (L ≤ 0)", down_color))
     for index, (name, color) in enumerate(directions_for_colorbar):
         x0 = (0.04, 0.58)[min(index, 1)]
         color_axis = colorbar_axis.inset_axes([x0, 0.60, 0.34, 0.14])
@@ -1827,10 +1861,7 @@ def plot_hpathway_summary(
     max_rows=40,
     layer_limits=None,
     layer_to_distance=None,
-    base_color="#08519c",
     size_range=(12.0, 400.0),
-    tumour_color="#756bb1",
-    stroma_color="#e6550d",
     side_colorbar=True,
     cell_in=0.30,
     alpha_range=(0.12, 1.0),
@@ -1838,8 +1869,10 @@ def plot_hpathway_summary(
     order_by_peak=True,
     direction_col=None,
     direction_labels=None,
-    inner_triangle_frac=0.34,
-    direction_as_shape=False,
+    elevated_color="#d62728",
+    depressed_color="#1f77b4",
+    nodir_color="0.7",
+    direction_alpha=0.9,
     ax=None,
     title=None,
     savepath=None,
@@ -1847,11 +1880,16 @@ def plot_hpathway_summary(
 ):
     """H-Pathway Summary: signature activity across the signed border axis.
 
-    A dotplot over a (pathway x layer) grid. Dot **colour** encodes the border
-    side (``L <= 0`` tumour vs ``L > 0`` stroma), dot **size** encodes the
-    row-relative score within each pathway, and dot **alpha** encodes
-    ``-log10(FDR)``. Grid cells whose FDR is below ``fdr_threshold`` receive a
-    black ring. Pathways are ordered by the position of their cluster-mass peak.
+    A dotplot over a (pathway x layer) grid. When a signed ``direction_col`` is
+    supplied, dot **colour** encodes the direction (``elevated_color`` for a
+    positive value, ``depressed_color`` for a negative one, ``nodir_color`` for
+    0/NaN); dot **size** encodes the row-relative score within each pathway; and
+    a black **ring** marks cells with FDR below ``fdr_threshold``. When no
+    direction column is given every dot uses a single neutral colour
+    (``nodir_color``); dot **size** still encodes the row-relative score, dot
+    **alpha** still encodes ``-log10(FDR)`` and the **ring** still marks
+    FDR < ``fdr_threshold`` (there is no elevated/depressed axis to colour by).
+    Pathways are ordered by the position of their cluster-mass peak.
 
     The input ``grid_df`` is a tidy table with one row per (pathway, layer),
     such as the H-Pathway Summary grid: it must contain ``path_col``, ``layer_col``,
@@ -1878,22 +1916,22 @@ def plot_hpathway_summary(
     direction_col : str | None
         Optional signed column (e.g. ``dir_contrast`` from
         :func:`hplot.hpathway_summary_grid`, = mean(group2) − mean(group1)).
-        When given, a size-matched triangle is drawn inside each dot: **up** if
-        the value is positive (second group higher), **down** if negative. Cells
-        with 0/NaN get no triangle.
+        When given, the dot **fill colour** encodes direction: ``elevated_color``
+        for a positive value, ``depressed_color`` for a negative one, and
+        ``nodir_color`` for 0/NaN. Dots stay circular; size still encodes the
+        row-relative score and the black ring still marks FDR < ``fdr_threshold``.
     direction_labels : tuple[str, str] | None
-        ``(down_label, up_label)`` for the direction legend, e.g.
-        ``("SD higher", "relapse higher")``. Defaults to generic 1st/2nd-group
-        wording.
-    inner_triangle_frac : float
-        Triangle area as a fraction of its host dot (so it sits inside it).
-        Used only when ``direction_as_shape=False``.
-    direction_as_shape : bool
-        If True, the mark *shape itself* encodes direction: a cell with a signed
-        direction is drawn as an up/down triangle (up = second group higher),
-        while a cell with no direction (NaN or exactly 0) stays a circle.
-        Colour/alpha/size/ring are unchanged, so only the shape differs. If
-        False (default), a small triangle is drawn *inside* each circle instead.
+        ``(depressed_label, elevated_label)`` for the direction legend, e.g.
+        ``("depressed vs baseline", "elevated vs baseline")``. Defaults to
+        ``("depressed", "elevated")``.
+    elevated_color, depressed_color : str
+        Fill colours for positive (elevated) and negative (depressed) direction.
+    nodir_color : str
+        Fill colour for cells with no signed direction (0/NaN).
+    direction_alpha : float
+        Peak dot opacity in direction mode. Dot alpha ramps with ``-log10(FDR)``
+        over ``alpha_range`` and is rescaled so the most-significant dot reaches
+        this value; colour encodes direction and the ring marks FDR < threshold.
     savepath : str | pathlib.Path | None
         Optional PNG output path. An SVG sibling is also written.
 
@@ -1994,8 +2032,8 @@ def plot_hpathway_summary(
         _ax_h = cell_in * max(len(paths), 1)      # data-area height (inches)
         _ml, _mr, _mt = 2.8, 2.4, 0.9             # left ylabels | right legend | top title
         if side_colorbar:
-            _key_in = 0.66                        # colour-key strip height (inches)
-            _gap_in = 0.36                        # border-distance axis + its title
+            _key_in = 0.95                        # colour-key strip height (inches)
+            _gap_in = 0.66                        # border-distance axis + its title
             _mb = _gap_in + _key_in               # bottom margin (inches)
             fig_w, fig_h = _ml + _ax_w + _mr, _mb + _ax_h + _mt
             fig = plt.figure(figsize=(fig_w, fig_h))
@@ -2010,73 +2048,62 @@ def plot_hpathway_summary(
     else:
         fig = ax.figure
 
-    # colour each dot by which side of the malignant border it sits on
-    # (L <= 0 tumour vs L > 0 stroma); alpha still encodes FDR.
-    rgba = np.zeros((len(xs), 4))
-    _tum_rgb = matplotlib.colors.to_rgb(tumour_color)
-    _str_rgb = matplotlib.colors.to_rgb(stroma_color)
-    for _k, _L in enumerate(xs):
-        rgba[_k, :3] = _str_rgb if _L > 0 else _tum_rgb
-    rgba[:, 3] = alphas
-
     _xs = np.asarray(xs, dtype=float)
     _ys = np.asarray(ys, dtype=float)
     _sz = np.asarray(sizes, dtype=float)
     _rg = np.asarray(rings, dtype=bool)
     _dr = np.asarray(dirs, dtype=float)
 
-    if direction_as_shape and D is not None:
-        # Hybrid glyph: a cell that HAS a signed direction becomes a triangle
-        # (up = second group higher, down = first group higher); a cell with no
-        # direction (NaN or exactly 0) stays a circle. Colour/alpha/size/ring
-        # encode side/FDR/score exactly as for circles, so only the mark shape
-        # differs. This keeps direction honest (no fake orientation) while the
-        # circle transparently means "no directional signal".
-        _is_dir = np.isfinite(_dr) & (_dr != 0.0)
-        _groups = [(~_is_dir, "o"), (_is_dir & (_dr > 0), "^"), (_is_dir & (_dr < 0), "v")]
-        for _mask, _mk in _groups:
-            if _mask.any():
-                ax.scatter(_xs[_mask], _ys[_mask], s=_sz[_mask], c=rgba[_mask],
-                           marker=_mk, linewidths=0, zorder=3)
-                _rm = _mask & _rg
-                if _rm.any():
-                    ax.scatter(_xs[_rm], _ys[_rm], s=_sz[_rm], marker=_mk,
-                               facecolors="none", edgecolors="k",
-                               linewidths=0.7, zorder=4)
+    # Fill colour. With a signed direction the colour encodes it: elevated (one
+    # colour) vs depressed (the other); cells with no signed direction (0/NaN)
+    # are neutral grey. Dots are solid circles — size encodes the row-relative
+    # score and a black RING marks FDR < threshold, so colour is the sole
+    # direction channel (no triangles). Without a direction column (e.g. a
+    # >2-group contrast that has no elevated/depressed axis) every dot is a
+    # single neutral colour; size + alpha (FDR) + ring still apply, so the
+    # border-side (tumour/stroma) colouring is not used.
+    rgba = np.zeros((len(xs), 4))
+    if D is not None:
+        _el_rgb = matplotlib.colors.to_rgb(elevated_color)
+        _de_rgb = matplotlib.colors.to_rgb(depressed_color)
+        _nd_rgb = matplotlib.colors.to_rgb(nodir_color)
+        for _k in range(len(xs)):
+            _d = _dr[_k]
+            if np.isfinite(_d) and _d > 0:
+                rgba[_k, :3] = _el_rgb
+            elif np.isfinite(_d) and _d < 0:
+                rgba[_k, :3] = _de_rgb
+            else:
+                rgba[_k, :3] = _nd_rgb
+        # alpha encodes FDR (opacity ramps with -log10(FDR), same scale as the
+        # legacy mode), rescaled so the most-significant dot reaches
+        # `direction_alpha`; colour still encodes direction and the ring still
+        # marks FDR < threshold.
+        _amax = max(float(alpha_range[1]), 1e-6)
+        rgba[:, 3] = np.asarray(alphas, dtype=float) * (float(direction_alpha) / _amax)
     else:
-        ax.scatter(xs, ys, s=sizes, c=rgba, linewidths=0, zorder=3)
-        _rx = [x for x, r in zip(xs, rings) if r]
-        _ry = [y for y, r in zip(ys, rings) if r]
-        _rs = [z for z, r in zip(sizes, rings) if r]
-        if _rx:
-            ax.scatter(_rx, _ry, s=_rs, facecolors="none", edgecolors="k",
-                       linewidths=0.7, zorder=4)
+        # no signed direction available -> neutral fill for every dot; alpha
+        # still encodes FDR and the ring marks significance (no tumour/stroma
+        # side colouring).
+        _nd_rgb = matplotlib.colors.to_rgb(nodir_color)
+        for _k in range(len(xs)):
+            rgba[_k, :3] = _nd_rgb
+        rgba[:, 3] = alphas
 
-        # optional direction glyph: a size-matched triangle drawn INSIDE each dot
-        # pointing up when the signed contrast (direction_col) is positive
-        # (second group higher) and down when negative. White with a thin dark
-        # edge to read on either side colour. Cells with 0/NaN get no glyph.
-        if D is not None:
-            _tf = float(inner_triangle_frac)
-            _up = [(x, y, s) for x, y, s, d in zip(xs, ys, sizes, dirs)
-                   if np.isfinite(d) and d > 0]
-            _dn = [(x, y, s) for x, y, s, d in zip(xs, ys, sizes, dirs)
-                   if np.isfinite(d) and d < 0]
-            for _pts, _mk in ((_up, "^"), (_dn, "v")):
-                if _pts:
-                    _tx = [q[0] for q in _pts]
-                    _ty = [q[1] for q in _pts]
-                    _ts = [max(4.0, q[2] * _tf) for q in _pts]
-                    ax.scatter(_tx, _ty, s=_ts, marker=_mk, c="white",
-                               edgecolors="0.15", linewidths=0.3, zorder=5)
+    ax.scatter(_xs, _ys, s=_sz, c=rgba, linewidths=0, zorder=3)
+    # black ring = FDR < threshold: a same-size circular outline over every
+    # significant dot.
+    if _rg.any():
+        ax.scatter(_xs[_rg], _ys[_rg], s=_sz[_rg], marker="o",
+                   facecolors="none", edgecolors="k", linewidths=0.7, zorder=4)
 
-    ax.axvline(0.0, color="0.4", ls="--", lw=0.9, zorder=1)
+    ax.axvline(0.0, color="0.4", ls="--", lw=1.8, zorder=1)
     ax.set_yticks(range(len(paths)))
     ax.set_yticklabels(paths, fontsize=9)
     ax.set_ylim(-0.6, len(paths) - 0.4)
     if layer_limits is not None:
         ax.set_xlim(layer_limits[0] - 0.6, layer_limits[1] + 0.6)
-    ax.set_xlabel("border layer L  (<0 tumour | 0 border | >0 stroma)", fontsize=12)
+    ax.set_xlabel("border layer L  (≤ 0 tumour | > 0 stroma)", fontsize=12)
     ax.grid(axis="both", color="0.92", lw=0.5, zorder=0)
     ax.tick_params(axis="both", pad=2, labelsize=10)
     if title:
@@ -2096,66 +2123,166 @@ def plot_hpathway_summary(
                      fontsize=10, title_fontsize=11)
     ax.add_artist(leg1)
 
-    # direction key (only when a signed direction is drawn)
+    # direction key (only when a signed direction is drawn): colour = elevated /
+    # depressed / no direction, plus a ringed dot for the FDR ring.
     if D is not None:
         if direction_labels and len(direction_labels) == 2:
             _dn_lbl, _up_lbl = direction_labels
         else:
-            _dn_lbl, _up_lbl = "1st group higher", "2nd group higher"
+            _dn_lbl, _up_lbl = "depressed", "elevated"
         _dir_handles = [
-            Line2D([0], [0], marker="^", linestyle="none", markerfacecolor="white",
-                   markeredgecolor="0.15", markeredgewidth=0.6, markersize=9,
-                   label=f"\u25b2 {_up_lbl}"),
-            Line2D([0], [0], marker="v", linestyle="none", markerfacecolor="white",
-                   markeredgecolor="0.15", markeredgewidth=0.6, markersize=9,
-                   label=f"\u25bc {_dn_lbl}"),
+            Line2D([0], [0], marker="o", linestyle="none", markerfacecolor=elevated_color,
+                   markeredgecolor="none", markersize=9, label=_up_lbl),
+            Line2D([0], [0], marker="o", linestyle="none", markerfacecolor=depressed_color,
+                   markeredgecolor="none", markersize=9, label=_dn_lbl),
+            Line2D([0], [0], marker="o", linestyle="none", markerfacecolor=nodir_color,
+                   markeredgecolor="none", markersize=9, label="no direction"),
+            Line2D([0], [0], marker="o", linestyle="none", markerfacecolor="0.85",
+                   markeredgecolor="k", markeredgewidth=0.9, markersize=9,
+                   label=f"FDR < {fdr_threshold:g}"),
         ]
-        if direction_as_shape:
-            _dir_handles.append(
-                Line2D([0], [0], marker="o", linestyle="none", markerfacecolor="0.6",
-                       markeredgecolor="none", markersize=9, label="\u25cf no direction"))
-        leg_dir = ax.legend(handles=_dir_handles, title="Direction", loc="center left",
-                            bbox_to_anchor=(1.01, 0.55), frameon=False,
+        leg_dir = ax.legend(handles=_dir_handles, title="Direction / significance",
+                            loc="center left", bbox_to_anchor=(1.01, 0.55), frameon=False,
                             fontsize=10, title_fontsize=11)
         ax.add_artist(leg_dir)
 
-    # FDR key: two horizontal alpha-ramp colorbars BELOW the panel (one per
-    # border side); discrete right-side legend is the fallback when no colour-
-    # key row is available.
-    if ax_cbar is not None:
+        # opacity key: neutral-grey dots at graduated opacity mapped to FDR, so
+        # the alpha channel reads like a normal dotplot legend (fainter = less
+        # significant). Uses the same alpha mapping as the drawn dots.
+        _a_scale = float(direction_alpha) / max(float(alpha_range[1]), 1e-6)
+        _fdr_ref = [fdr_threshold, 0.01, 1.0 / (10 ** neglog_fdr_cap)]
+        _alpha_handles = []
+        for _q in _fdr_ref:
+            _a = float(np.clip(np.interp(-np.log10(_q), (0.0, neglog_fdr_cap), alpha_range),
+                               alpha_range[0], alpha_range[1])) * _a_scale
+            _alpha_handles.append(Line2D(
+                [0], [0], marker="o", linestyle="none",
+                markerfacecolor=(0.35, 0.35, 0.35, float(np.clip(_a, 0.0, 1.0))),
+                markeredgecolor="none", markersize=9, label=f"FDR = {_q:g}"))
+        leg_alpha = ax.legend(handles=_alpha_handles, title="Opacity = FDR",
+                              loc="lower left", bbox_to_anchor=(1.01, 0.05),
+                              frameon=False, fontsize=10, title_fontsize=11)
+        ax.add_artist(leg_alpha)
+
+    # FDR key row below the panel. Direction mode shows:
+    # (1) dot-size gradient, (2) two side-by-side alpha-ramp colorbars (red for
+    # elevated, blue for depressed) — each showing the actual color with FDR
+    # opacity ramp, (3) ring note. No-direction mode shows a single neutral
+    # opacity ramp. When no colour-key row is available (external ax /
+    # side_colorbar=False) a discrete right-side legend is the fallback.
+    if ax_cbar is not None and D is not None:
+        # direction mode: full legend strip with size gradient and two colored
+        # alpha-ramp colorbars (elevated = red, depressed = blue)
         _norm = Normalize(vmin=0.0, vmax=neglog_fdr_cap)
-        _dirs = [("tumour (L \u2264 0)", tumour_color), ("stroma (L > 0)", stroma_color)]
-        # squeezed key row: bars sit low so the tick labels fit below and the two
-        # captions + the ring note share one baseline (_cap_y) just above them.
-        _sh, _cb_w = 0.20, 0.34
-        _x0s = [0.06, 0.60]
-        _yy = 0.30
-        _cap_y = _yy + _sh + 0.06   # shared baseline for captions and ring note
-        for _i, (_name, _col) in enumerate(_dirs):
-            _cax = ax_cbar.inset_axes([_x0s[_i], _yy, _cb_w, _sh])
-            _sm = ScalarMappable(norm=_norm, cmap=_alpha_ramp_cmap(
-                _col, alpha_range[0], alpha_range[1]))
-            _sm.set_array([])
-            _cb = fig.colorbar(_sm, cax=_cax, orientation="horizontal")
-            _cb.ax.xaxis.set_ticks_position("bottom")
-            _cb.set_label(r"$-\log_{10}$ FDR", fontsize=8, labelpad=-1)
-            _cb.ax.tick_params(labelsize=8, length=2, pad=1)
-            ax_cbar.text(_x0s[_i] + _cb_w / 2.0, _cap_y, _name,
-                         transform=ax_cbar.transAxes, ha="center", va="bottom",
-                         fontsize=9, color=_col, fontweight="bold")
-        ax_cbar.text(0.5, _cap_y, f"ring = FDR < {fdr_threshold:g}",
+        _yy = 0.58          # bar bottom (fraction of ax_cbar)
+        _sh = 0.20          # bar height (fraction of ax_cbar)
+        _lab_y = 0.86       # shared y for all column titles (closer to top)
+        _bot_y = 0.24       # shared y for all bottom captions (closer to elements above)
+        # legend font sizes (150% of the previous values)
+        _fs_title = 10.5
+        _fs_num = 9.0
+        _fs_tick = 9.0
+
+        # (1) dot-size legend: 5 reference dots at row-relative = 0, 0.25, 0.5, 0.75, 1.0
+        _sz_x0 = 0.02
+        _sz_vals = [0.0, 0.25, 0.5, 0.75, 1.0]
+        _sz_labels = ["0", "0.25", "0.5", "0.75", "1"]
+        for _k, (_v, _lbl) in enumerate(zip(_sz_vals, _sz_labels)):
+            _ms = np.sqrt(np.interp(_v, (0.0, 1.0), size_range))  # marker size in points
+            _x = _sz_x0 + 0.028 * _k
+            ax_cbar.plot(_x, 0.64, "o", color="0.5", markersize=_ms, transform=ax_cbar.transAxes,
+                         clip_on=False)
+            ax_cbar.text(_x, _bot_y, _lbl, transform=ax_cbar.transAxes, ha="center", va="bottom",
+                         fontsize=_fs_num, color="0.35", clip_on=False)
+        ax_cbar.text(_sz_x0 + 0.056, _lab_y, "Relative score", transform=ax_cbar.transAxes,
+                     ha="center", va="bottom", fontsize=_fs_title, color="0.25", clip_on=False)
+
+        # (2) two side-by-side alpha-ramp colorbars: elevated (red) and depressed (blue)
+        # Each shows the actual dot color with opacity ramping by -log10 FDR
+        if direction_labels and len(direction_labels) == 2:
+            _dn_lbl, _up_lbl = direction_labels
+        else:
+            _dn_lbl, _up_lbl = "depressed", "elevated"
+        _up_short = _up_lbl
+        _dn_short = _dn_lbl
+
+        _cb_w = 0.18
+        _gap = 0.04
+        # elevated (red) colorbar
+        _cb_x0_up = 0.22
+        _cax_up = ax_cbar.inset_axes([_cb_x0_up, _yy, _cb_w, _sh])
+        _sm_up = ScalarMappable(norm=_norm, cmap=_alpha_ramp_cmap(
+            elevated_color, alpha_range[0], alpha_range[1]))
+        _sm_up.set_array([])
+        _cb_up = fig.colorbar(_sm_up, cax=_cax_up, orientation="horizontal")
+        _cb_up.ax.xaxis.set_ticks_position("bottom")
+        _cb_up.ax.tick_params(labelsize=_fs_tick, length=2, pad=1)
+        _cb_up.set_ticks([0, 1, 2, 3])
+        ax_cbar.text(_cb_x0_up + _cb_w / 2, _lab_y, _up_short, transform=ax_cbar.transAxes,
+                     ha="center", va="bottom", fontsize=_fs_title, color="0.25", clip_on=False)
+
+        # depressed (blue) colorbar
+        _cb_x0_dn = _cb_x0_up + _cb_w + _gap
+        _cax_dn = ax_cbar.inset_axes([_cb_x0_dn, _yy, _cb_w, _sh])
+        _sm_dn = ScalarMappable(norm=_norm, cmap=_alpha_ramp_cmap(
+            depressed_color, alpha_range[0], alpha_range[1]))
+        _sm_dn.set_array([])
+        _cb_dn = fig.colorbar(_sm_dn, cax=_cax_dn, orientation="horizontal")
+        _cb_dn.ax.xaxis.set_ticks_position("bottom")
+        _cb_dn.ax.tick_params(labelsize=_fs_tick, length=2, pad=1)
+        _cb_dn.set_ticks([0, 1, 2, 3])
+        ax_cbar.text(_cb_x0_dn + _cb_w / 2, _lab_y, _dn_short, transform=ax_cbar.transAxes,
+                     ha="center", va="bottom", fontsize=_fs_title, color="0.25", clip_on=False)
+
+        # shared -log10 FDR label below both colorbars (aligned with the size numbers)
+        ax_cbar.text((_cb_x0_up + _cb_x0_dn + _cb_w) / 2, _bot_y,
+                     r"$-\log_{10}$ FDR  (opacity)", transform=ax_cbar.transAxes,
+                     ha="center", va="bottom", fontsize=_fs_num, color="0.35", clip_on=False)
+
+        # (3) ring = FDR < threshold: an OPEN ringed dot (no fill), matching the size legend
+        _ring_x = 0.82
+        ax_cbar.text(_ring_x, _lab_y, "significance", transform=ax_cbar.transAxes,
+                     ha="center", va="bottom", fontsize=_fs_title, color="0.25", clip_on=False)
+        # markersize matches the "1" dot in the size legend
+        _ring_ms = np.sqrt(size_range[1])
+        ax_cbar.plot(_ring_x, 0.64, "o", markerfacecolor="none", markeredgecolor="k",
+                     markeredgewidth=1.2, markersize=_ring_ms, transform=ax_cbar.transAxes,
+                     clip_on=False)
+        ax_cbar.text(_ring_x, _bot_y, f"FDR < {fdr_threshold:g}", transform=ax_cbar.transAxes,
+                     ha="center", va="bottom", fontsize=_fs_num, color="0.3", clip_on=False)
+    elif ax_cbar is not None:
+        # no direction: a single neutral opacity ramp (alpha = -log10 FDR); no
+        # tumour/stroma side colouring.
+        _norm = Normalize(vmin=0.0, vmax=neglog_fdr_cap)
+        _sh, _cb_w = 0.20, 0.40
+        _x0 = 0.30
+        _yy = 0.58          # bar bottom (match direction mode)
+        _cap_y = 0.86       # caption y (match direction mode _lab_y)
+        _fs_title = 10.5    # match direction mode
+        _fs_tick = 9.0      # match direction mode
+        _cax = ax_cbar.inset_axes([_x0, _yy, _cb_w, _sh])
+        _sm = ScalarMappable(norm=_norm, cmap=_alpha_ramp_cmap(
+            nodir_color, alpha_range[0], alpha_range[1]))
+        _sm.set_array([])
+        _cb = fig.colorbar(_sm, cax=_cax, orientation="horizontal")
+        _cb.ax.xaxis.set_ticks_position("bottom")
+        _cb.set_label(r"$-\log_{10}$ FDR", fontsize=_fs_tick, labelpad=-1)
+        _cb.ax.tick_params(labelsize=_fs_tick, length=2, pad=1)
+        ax_cbar.text(0.5, _cap_y,
+                     f"opacity = FDR  \u00b7  size = row-relative score"
+                     f"  \u00b7  ring = FDR < {fdr_threshold:g}",
                      transform=ax_cbar.transAxes, ha="center", va="bottom",
-                     fontsize=8, color="0.35")
-    else:
+                     fontsize=_fs_title, color="0.35")
+    elif D is None:
         alpha_ref = [1.0, 0.05, 0.005]
         alpha_handles = [Line2D([0], [0], marker="o", linestyle="none",
-                                markerfacecolor=(*matplotlib.colors.to_rgb(base_color), float(np.clip(
+                                markerfacecolor=(*matplotlib.colors.to_rgb(nodir_color), float(np.clip(
                                     np.interp(-np.log10(q), (0.0, neglog_fdr_cap), alpha_range),
                                     alpha_range[0], alpha_range[1]))),
                                 markeredgecolor="k" if q < fdr_threshold else "none",
                                 markeredgewidth=0.7, markersize=9,
                                 label=f"FDR = {q:g}") for q in alpha_ref]
-        ax.legend(handles=alpha_handles, title=f"FDR ({fdr_col})", loc="lower left",
+        ax.legend(handles=alpha_handles, title=f"Opacity = FDR ({fdr_col})", loc="lower left",
                   bbox_to_anchor=(1.01, 0.0), frameon=False, fontsize=10, title_fontsize=11)
 
     if savepath is not None:

@@ -1543,7 +1543,13 @@ def _deviation_fdr_grid(profiles, path_names, grid, *, sample_col, layer_col,
                         min_per_group=3, alternative="two-sided", verbose=True):
     """Per (layer, pathway) deviation FDR: per-slide deviation from a baseline
     region (``deviation_tensor``) tested per layer with a signed-rank Wilcoxon,
-    BH-corrected over the whole grid."""
+    BH-corrected over the whole grid.
+
+    Returns ``(fdr, direction)``: ``fdr`` is the BH-corrected p-value grid and
+    ``direction`` is the mean per-slide deviation from the baseline (positive =
+    elevated vs baseline, negative = depressed), so callers can render a signed
+    up/down glyph on the deviation panel too.
+    """
     nG, nP = len(grid), len(path_names)
     vals, lays = [], []
     for _sid, sub in profiles.groupby(sample_col):
@@ -1554,6 +1560,7 @@ def _deviation_fdr_grid(profiles, path_names, grid, *, sample_col, layer_col,
                             min_baseline_layers=min_baseline_layers,
                             verbose=verbose)
     p_dev = np.full((nG, nP), np.nan)
+    dir_dev = np.full((nG, nP), np.nan)
     for i in range(nG):
         for j in range(nP):
             x = Ddev[:, i, j]
@@ -1564,11 +1571,12 @@ def _deviation_fdr_grid(profiles, path_names, grid, *, sample_col, layer_col,
                                            alternative=alternative).pvalue
                 except ValueError:
                     p_dev[i, j] = np.nan
+                dir_dev[i, j] = float(np.mean(x))
     fdr = np.full(nG * nP, np.nan)
     flat = p_dev.ravel()
     mask = np.isfinite(flat)
     fdr[mask] = benjamini_hochberg(flat[mask])
-    return fdr.reshape(nG, nP)
+    return fdr.reshape(nG, nP), dir_dev
 
 
 def hpathway_summary_grid(profiles, *, path_names, grid,
@@ -1638,13 +1646,13 @@ def hpathway_summary_grid(profiles, *, path_names, grid,
                                    score_agg=score_agg)
 
     if deviation is not None:
-        fdr_dev = _deviation_fdr_grid(
+        fdr_dev, dir_dev = _deviation_fdr_grid(
             profiles, path_names, grid, sample_col=sample_col,
             layer_col=layer_col, baseline_window=deviation,
             min_baseline_layers=min_baseline_layers, min_per_group=min_per_group,
             alternative=deviation_alternative, verbose=verbose)
     else:
-        fdr_dev = None
+        fdr_dev = dir_dev = None
 
     rows = []
     for i, L in enumerate(grid):
@@ -1652,6 +1660,7 @@ def hpathway_summary_grid(profiles, *, path_names, grid,
             rec = dict(pathway=nm, layer=int(L), score=score_grid[i, j])
             if fdr_dev is not None:
                 rec["fdr_dev"] = fdr_dev[i, j]
+                rec["dir_dev"] = dir_dev[i, j]
             rows.append(rec)
     grid_df = pd.DataFrame(rows)
 
