@@ -1781,3 +1781,290 @@ plot_delta_hgam = plot_delta_hplot_gam  # legacy alias
 # working name.
 plot_signpost = plot_hloci_summary
 
+
+def _hpathway_cluster_mass_peak(row, layers):
+    """Peak layer inside a pathway row's strongest contiguous above-median run.
+
+    Mirrors the cluster-mass logic used by the spatial screen: find the run of
+    contiguous above-median layers with the greatest summed elevation, then
+    return the layer of the maximum inside that run (not a bare whole-row
+    argmax). Degenerate/flat rows fall back to the plain argmax.
+    """
+    r = np.asarray(row, dtype=float)
+    layers = np.asarray(layers)
+    if not np.isfinite(r).any():
+        return -np.inf
+    thr = np.nanmedian(r)
+    above = np.where(np.isfinite(r), r - thr, 0.0)
+    above = np.where(above > 0.0, above, 0.0)
+    best_sum, best_lo, best_hi = -np.inf, None, None
+    i, n = 0, len(r)
+    while i < n:
+        if above[i] > 0.0:
+            j, s = i, 0.0
+            while j < n and above[j] > 0.0:
+                s += above[j]; j += 1
+            if s > best_sum:
+                best_sum, best_lo, best_hi = s, i, j - 1
+            i = j
+        else:
+            i += 1
+    if best_lo is None:
+        return float(layers[int(np.nanargmax(np.where(np.isfinite(r), r, -np.inf)))])
+    seg = np.where(np.isfinite(r[best_lo:best_hi + 1]), r[best_lo:best_hi + 1], -np.inf)
+    return float(layers[best_lo + int(np.argmax(seg))])
+
+
+def plot_hpathway_summary(
+    grid_df,
+    *,
+    score_col="score",
+    fdr_col="fdr_dev",
+    path_col="pathway",
+    layer_col="layer",
+    fdr_threshold=0.05,
+    select_fdr_below=None,
+    max_rows=40,
+    layer_limits=None,
+    layer_to_distance=None,
+    base_color="#08519c",
+    size_range=(12.0, 400.0),
+    tumour_color="#756bb1",
+    stroma_color="#e6550d",
+    side_colorbar=True,
+    cell_in=0.30,
+    alpha_range=(0.12, 1.0),
+    neglog_fdr_cap=3.0,
+    order_by_peak=True,
+    ax=None,
+    title=None,
+    savepath=None,
+    dpi=240,
+):
+    """H-Pathway Summary: signature activity across the signed border axis.
+
+    A dotplot over a (pathway x layer) grid. Dot **colour** encodes the border
+    side (``L <= 0`` tumour vs ``L > 0`` stroma), dot **size** encodes the
+    row-relative score within each pathway, and dot **alpha** encodes
+    ``-log10(FDR)``. Grid cells whose FDR is below ``fdr_threshold`` receive a
+    black ring. Pathways are ordered by the position of their cluster-mass peak.
+
+    The input ``grid_df`` is a tidy table with one row per (pathway, layer),
+    such as the H-Pathway Summary grid: it must contain ``path_col``, ``layer_col``,
+    ``score_col`` and the selected ``fdr_col`` (e.g. ``fdr_dev``,
+    ``fdr_contrast``, ``fdr_treatment`` or ``fdr_strata4``).
+
+    Parameters
+    ----------
+    grid_df : pandas.DataFrame
+        Tidy (pathway x layer) grid with score and FDR columns.
+    select_fdr_below : float | None
+        When set, keep only pathways with FDR below this value in >= 1 shown
+        layer (discovery-mode selection). ``None`` keeps every pathway.
+    max_rows : int | None
+        Cap on the number of pathways drawn (best min-FDR first).
+    cell_in : float
+        Physical size (inches) of one grid cell, shared by both axes, so the
+        x-tick (layer) and y-tick (pathway) gaps are equal (square cells) and
+        consistent across panels regardless of how many rows/columns are shown.
+    layer_to_distance : Mapping[int, float] | None
+        Optional physical-distance map from :func:`build_layer_distance_map`;
+        when supplied the x-axis gains µm tick labels via
+        :func:`add_border_distance_axis`.
+    savepath : str | pathlib.Path | None
+        Optional PNG output path. An SVG sibling is also written.
+
+    Returns
+    -------
+    dict | None
+        ``{"figure", "ax", "colorbar_axis", "selected"}``; ``None`` when no
+        pathway passes selection.
+    """
+    import matplotlib
+    from pathlib import Path
+    from matplotlib.lines import Line2D
+    from matplotlib.colors import Normalize
+    from matplotlib.cm import ScalarMappable
+
+    piv_s = grid_df.pivot(index=path_col, columns=layer_col, values=score_col)
+    piv_f = grid_df.pivot(index=path_col, columns=layer_col, values=fdr_col)
+    layers = np.array(sorted(piv_s.columns))
+    if layer_limits is not None:
+        layers = layers[(layers >= layer_limits[0]) & (layers <= layer_limits[1])]
+    piv_s = piv_s[layers]
+    piv_f = piv_f.reindex(columns=layers)
+
+    # ---- auto-selection: keep pathways significant in >= 1 shown layer ----
+    if select_fdr_below is not None:
+        keep = [p for p in piv_f.index
+                if np.isfinite(piv_f.loc[p].to_numpy(dtype=float)).any()
+                and np.nanmin(piv_f.loc[p].to_numpy(dtype=float)) < select_fdr_below]
+        piv_s = piv_s.loc[keep]
+        piv_f = piv_f.loc[keep]
+    # cap rows (best min-FDR first) so a big discovery stays readable
+    if max_rows is not None and len(piv_s.index) > max_rows:
+        best = {p: np.nanmin(piv_f.loc[p].to_numpy(dtype=float)) for p in piv_f.index}
+        order = sorted(piv_f.index, key=lambda p: best[p])[:max_rows]
+        piv_s = piv_s.loc[order]
+        piv_f = piv_f.loc[order]
+
+    paths = list(piv_s.index)
+    if len(paths) == 0:
+        print(f"H-Pathway Summary [{fdr_col}]: no pathway passed selection "
+              f"(FDR < {select_fdr_below}); nothing to plot.")
+        return None
+    if order_by_peak:
+        # y increases upward, so an ascending sort renders top -> bottom in
+        # descending peak-layer position.
+        peak = {p: _hpathway_cluster_mass_peak(piv_s.loc[p].to_numpy(dtype=float), layers)
+                for p in paths}
+        paths = sorted(paths, key=lambda p: peak[p])
+    piv_s = piv_s.reindex(index=paths)
+    piv_f = piv_f.reindex(index=paths)
+
+    S = piv_s.to_numpy(dtype=float)
+    F = piv_f.to_numpy(dtype=float)
+
+    # Row-relative sizing: normalize each pathway row to [0, 1] independently so
+    # within-pathway layer differences span the full size range.
+    row_lo = np.nanmin(S, axis=1, keepdims=True)
+    row_hi = np.nanmax(S, axis=1, keepdims=True)
+    row_span = row_hi - row_lo
+    S_relative = np.divide(S - row_lo, row_span, out=np.full_like(S, 0.5),
+                           where=row_span > 1e-9)
+
+    xs, ys, sizes, alphas, rings = [], [], [], [], []
+    for iy, p in enumerate(paths):
+        for ix, L in enumerate(layers):
+            if not np.isfinite(S[iy, ix]):
+                continue
+            xs.append(L)
+            ys.append(iy)
+            sizes.append(np.interp(S_relative[iy, ix], (0.0, 1.0), size_range))
+            fv = F[iy, ix]
+            if np.isfinite(fv) and fv > 0:
+                a = np.interp(-np.log10(fv), (0.0, neglog_fdr_cap), alpha_range)
+            else:
+                a = alpha_range[0]
+            alphas.append(float(np.clip(a, alpha_range[0], alpha_range[1])))
+            rings.append(bool(np.isfinite(fv) and fv < fdr_threshold))
+
+    ax_cbar = None
+    fig = None
+    if ax is None:
+        # ---- deterministic square-cell layout --------------------------------
+        # One knob (`cell_in`) sets BOTH the x-tick (layer) and y-tick (pathway)
+        # spacing, so cells are square and the visual gap is identical across
+        # panels regardless of how many pathways/layers each selects. The data
+        # axes are sized in inches and fixed inch margins are added for the tick
+        # labels, legend, title and colour-key, decoupling the grid from its
+        # decorations.
+        _ax_w = cell_in * max(len(layers), 1)     # data-area width  (inches)
+        _ax_h = cell_in * max(len(paths), 1)      # data-area height (inches)
+        _ml, _mr, _mt = 2.8, 2.4, 0.9             # left ylabels | right legend | top title
+        if side_colorbar:
+            _key_in = 0.66                        # colour-key strip height (inches)
+            _gap_in = 0.36                        # border-distance axis + its title
+            _mb = _gap_in + _key_in               # bottom margin (inches)
+            fig_w, fig_h = _ml + _ax_w + _mr, _mb + _ax_h + _mt
+            fig = plt.figure(figsize=(fig_w, fig_h))
+            ax = fig.add_axes([_ml / fig_w, _mb / fig_h, _ax_w / fig_w, _ax_h / fig_h])
+            ax_cbar = fig.add_axes([_ml / fig_w, 0.0, _ax_w / fig_w, _key_in / fig_h])
+            ax_cbar.set_axis_off()
+        else:
+            _mb = 0.9
+            fig_w, fig_h = _ml + _ax_w + _mr, _mb + _ax_h + _mt
+            fig = plt.figure(figsize=(fig_w, fig_h))
+            ax = fig.add_axes([_ml / fig_w, _mb / fig_h, _ax_w / fig_w, _ax_h / fig_h])
+    else:
+        fig = ax.figure
+
+    # colour each dot by which side of the malignant border it sits on
+    # (L <= 0 tumour vs L > 0 stroma); alpha still encodes FDR.
+    rgba = np.zeros((len(xs), 4))
+    _tum_rgb = matplotlib.colors.to_rgb(tumour_color)
+    _str_rgb = matplotlib.colors.to_rgb(stroma_color)
+    for _k, _L in enumerate(xs):
+        rgba[_k, :3] = _str_rgb if _L > 0 else _tum_rgb
+    rgba[:, 3] = alphas
+    ax.scatter(xs, ys, s=sizes, c=rgba, linewidths=0, zorder=3)
+    _rx = [x for x, r in zip(xs, rings) if r]
+    _ry = [y for y, r in zip(ys, rings) if r]
+    _rs = [z for z, r in zip(sizes, rings) if r]
+    if _rx:
+        ax.scatter(_rx, _ry, s=_rs, facecolors="none", edgecolors="k",
+                   linewidths=0.7, zorder=4)
+
+    ax.axvline(0.0, color="0.4", ls="--", lw=0.9, zorder=1)
+    ax.set_yticks(range(len(paths)))
+    ax.set_yticklabels(paths, fontsize=9)
+    ax.set_ylim(-0.6, len(paths) - 0.4)
+    if layer_limits is not None:
+        ax.set_xlim(layer_limits[0] - 0.6, layer_limits[1] + 0.6)
+    ax.set_xlabel("border layer L  (<0 tumour | 0 border | >0 stroma)", fontsize=12)
+    ax.grid(axis="both", color="0.92", lw=0.5, zorder=0)
+    ax.tick_params(axis="both", pad=2, labelsize=10)
+    if title:
+        ax.set_title(title, fontsize=13)
+    if layer_to_distance is not None:
+        add_border_distance_axis(ax, layer_to_distance)
+
+    # size legend (neutral grey; encodes the row-relative dot-size scale only)
+    size_ref = [0.0, 0.5, 1.0]
+    size_labels = ["row min", "row mid", "row max"]
+    size_handles = [Line2D([0], [0], marker="o", linestyle="none",
+                           markerfacecolor="0.5", markeredgecolor="none",
+                           markersize=np.sqrt(np.interp(v, (0.0, 1.0), size_range)),
+                           label=lbl) for v, lbl in zip(size_ref, size_labels)]
+    leg1 = ax.legend(handles=size_handles, title="Relative score", loc="upper left",
+                     bbox_to_anchor=(1.01, 1.0), frameon=False, labelspacing=1.1,
+                     fontsize=10, title_fontsize=11)
+    ax.add_artist(leg1)
+
+    # FDR key: two horizontal alpha-ramp colorbars BELOW the panel (one per
+    # border side); discrete right-side legend is the fallback when no colour-
+    # key row is available.
+    if ax_cbar is not None:
+        _norm = Normalize(vmin=0.0, vmax=neglog_fdr_cap)
+        _dirs = [("tumour (L \u2264 0)", tumour_color), ("stroma (L > 0)", stroma_color)]
+        # squeezed key row: bars sit low so the tick labels fit below and the two
+        # captions + the ring note share one baseline (_cap_y) just above them.
+        _sh, _cb_w = 0.20, 0.34
+        _x0s = [0.06, 0.60]
+        _yy = 0.30
+        _cap_y = _yy + _sh + 0.06   # shared baseline for captions and ring note
+        for _i, (_name, _col) in enumerate(_dirs):
+            _cax = ax_cbar.inset_axes([_x0s[_i], _yy, _cb_w, _sh])
+            _sm = ScalarMappable(norm=_norm, cmap=_alpha_ramp_cmap(
+                _col, alpha_range[0], alpha_range[1]))
+            _sm.set_array([])
+            _cb = fig.colorbar(_sm, cax=_cax, orientation="horizontal")
+            _cb.ax.xaxis.set_ticks_position("bottom")
+            _cb.set_label(r"$-\log_{10}$ FDR", fontsize=8, labelpad=-1)
+            _cb.ax.tick_params(labelsize=8, length=2, pad=1)
+            ax_cbar.text(_x0s[_i] + _cb_w / 2.0, _cap_y, _name,
+                         transform=ax_cbar.transAxes, ha="center", va="bottom",
+                         fontsize=9, color=_col, fontweight="bold")
+        ax_cbar.text(0.5, _cap_y, f"ring = FDR < {fdr_threshold:g}",
+                     transform=ax_cbar.transAxes, ha="center", va="bottom",
+                     fontsize=8, color="0.35")
+    else:
+        alpha_ref = [1.0, 0.05, 0.005]
+        alpha_handles = [Line2D([0], [0], marker="o", linestyle="none",
+                                markerfacecolor=(*matplotlib.colors.to_rgb(base_color), float(np.clip(
+                                    np.interp(-np.log10(q), (0.0, neglog_fdr_cap), alpha_range),
+                                    alpha_range[0], alpha_range[1]))),
+                                markeredgecolor="k" if q < fdr_threshold else "none",
+                                markeredgewidth=0.7, markersize=9,
+                                label=f"FDR = {q:g}") for q in alpha_ref]
+        ax.legend(handles=alpha_handles, title=f"FDR ({fdr_col})", loc="lower left",
+                  bbox_to_anchor=(1.01, 0.0), frameon=False, fontsize=10, title_fontsize=11)
+
+    if savepath is not None:
+        output = Path(savepath)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(output, dpi=dpi, bbox_inches="tight")
+        fig.savefig(output.with_suffix(".svg"), bbox_inches="tight")
+
+    return {"figure": fig, "ax": ax, "colorbar_axis": ax_cbar, "selected": paths}
+

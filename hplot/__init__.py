@@ -22,6 +22,7 @@ from .plotting import (
     plot_hloci_bands,
     plot_hloci_fdr_summary,
     plot_hloci_bands_bidirectional,
+    plot_hpathway_summary,
     plot_signpost,
     build_layer_distance_map,
     add_border_distance_axis,
@@ -38,6 +39,15 @@ from .stats import (
     directional_cluster_bands,
     gradient_cluster_mass_screen,
     deviation_tensor,
+    benjamini_hochberg,
+    hpathway_summary_grid,
+)
+from .tl import ucell_scores, pathway_layer_profile
+from .catalogs import (
+    load_catalog,
+    read_gmt,
+    write_gmt,
+    select_signatures_on_panel,
 )
 
 __all__ = [
@@ -53,6 +63,7 @@ __all__ = [
     "plot_hloci_bands",
     "plot_hloci_fdr_summary",
     "plot_hloci_bands_bidirectional",
+    "plot_hpathway_summary",
     "plot_signpost",
     "build_layer_distance_map",
     "add_border_distance_axis",
@@ -67,6 +78,15 @@ __all__ = [
     "directional_cluster_bands",
     "gradient_cluster_mass_screen",
     "deviation_tensor",
+    "benjamini_hochberg",
+    "hpathway_summary_grid",
+    "ucell_scores",
+    "pathway_layer_profile",
+    "load_catalog",
+    "read_gmt",
+    "write_gmt",
+    "select_signatures_on_panel",
+    "catalogs",
     "pp",
     "tl",
     "pl",
@@ -76,4 +96,4 @@ __all__ = [
 # scanpy-style AnnData API (pp/tl/pl) plus a CSV bridge (io). These submodules
 # import anndata lazily *inside* their functions, so importing hplot (or
 # hplot.core) still works without anndata installed.
-from . import pp, tl, pl, io  # noqa: E402
+from . import pp, tl, pl, io, catalogs  # noqa: E402

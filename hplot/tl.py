@@ -11,6 +11,9 @@ to ``adata`` (here ``adata.uns['hplot']`` as an h5ad-safe dict)::
 
 from __future__ import annotations
 
+import numpy as np
+import pandas as pd
+
 from ._anndata import _adata_to_tidy, _require_anndata
 from ._serial import serialize
 from .core import HPlot
@@ -123,3 +126,161 @@ def hplot(
         color_map=color_map, legend_title=legend_title,
     )
     return adata if copy else None
+
+
+# ---------------------------------------------------------------------------
+# UCell pathway/signature scoring for the H-Pathway Summary
+# ---------------------------------------------------------------------------
+def ucell_scores(X, sig_idx, *, max_rank=1500, chunk=20000):
+    """Per-cell UCell scores for each signature (rank-based, bounded ``[0, 1]``).
+
+    The per-cell rank matrix is computed once per cell-chunk and reused for
+    every signature in ``sig_idx``, so adding signatures is cheap; peak memory
+    is bounded by ``chunk``.
+
+    Parameters
+    ----------
+    X : scipy.sparse matrix | ndarray, shape (n_cells, n_genes)
+        Expression matrix (rows = cells).
+    sig_idx : dict[str, ndarray[int]]
+        Signature name -> integer column indices into ``X`` of its genes.
+    max_rank : int
+        UCell rank cap; genes ranked beyond this contribute the capped rank.
+    chunk : int
+        Number of cells scored per block.
+
+    Returns
+    -------
+    dict[str, ndarray[float32]]
+        Signature name -> per-cell score (length ``n_cells``).
+    """
+    n = X.shape[0]
+    names = list(sig_idx)
+    out = {nm: np.empty(n, dtype=np.float32) for nm in names}
+    mr = int(max_rank)
+    for start in range(0, n, chunk):
+        stop = min(start + chunk, n)
+        block = np.asarray(_to_dense(X[start:stop]), dtype=np.float32)
+        b, g = block.shape
+        mr_eff = max(1, min(mr, g))
+        order = np.argsort(-block, axis=1, kind="stable")
+        ranks = np.empty((b, g), dtype=np.int32)
+        rows = np.arange(b)[:, None]
+        ranks[rows, order] = np.arange(1, g + 1, dtype=np.int32)[None, :]
+        np.minimum(ranks, mr_eff + 1, out=ranks)
+        for nm in names:
+            idx = np.asarray(sig_idx[nm], dtype=np.int64)
+            k = int(idx.size)
+            if k == 0:
+                out[nm][start:stop] = np.nan
+                continue
+            rsum = ranks[:, idx].sum(axis=1).astype(np.float64)
+            U = rsum - k * (k + 1) / 2.0
+            out[nm][start:stop] = (1.0 - U / (k * mr_eff)).astype(np.float32)
+    return out
+
+
+def pathway_layer_profile(X, layers, signatures, *, var_names, sample=None,
+                          max_rank=1500, chunk=8000, extra=None):
+    """Per-layer mean UCell profile for many signatures at once.
+
+    Scales to large catalogs: the per-cell rank matrix is computed once per
+    cell-chunk and all signatures are scored in a single sparse membership
+    matmul (``ranks @ M``); per-layer means are accumulated on the fly, so
+    nothing of size ``(n_cells x n_signatures)`` is ever materialised.
+
+    Geometry is *not* computed here: pass ``layers`` (one integer border layer
+    per row of ``X``) from your existing H-Plot pipeline, so the scientific
+    layering is unchanged and only the scoring/aggregation is packaged.
+
+    Parameters
+    ----------
+    X : scipy.sparse matrix | ndarray, shape (n_cells, n_genes)
+        Expression for the cells to profile (already restricted to valid layers).
+    layers : array-like[int], shape (n_cells,)
+        Integer border layer for each row of ``X``.
+    signatures : dict[str, sequence[str]]
+        Signature name -> gene symbols.
+    var_names : sequence[str]
+        Gene symbols matching the columns of ``X``.
+    sample : hashable | None
+        If given, attached as a ``"sample"`` column on every output row.
+    max_rank : int
+        UCell rank cap.
+    chunk : int
+        Cells scored per block.
+    extra : dict | None
+        Extra scalar columns to attach to every output row (e.g. status).
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per layer with columns ``layer``, one per signature (mean
+        per-cell UCell score), ``n_cells``, plus ``sample``/``extra`` if given.
+    """
+    import scipy.sparse as sp
+
+    L = np.asarray(layers)
+    L = L[np.isfinite(L.astype(float))].astype(int) if L.dtype.kind == "f" else L.astype(int)
+    if L.shape[0] != X.shape[0]:
+        raise ValueError(
+            f"layers length {L.shape[0]} != X rows {X.shape[0]}; filter both "
+            "to the same valid-layer cells before calling.")
+
+    names = list(signatures)
+    nS, G = len(names), X.shape[1]
+    var_pos = {str(g): i for i, g in enumerate(var_names)}
+
+    rows, cols = [], []
+    kcount = np.zeros(nS, dtype=np.float64)
+    for j, nm in enumerate(names):
+        gi = [var_pos[str(g)] for g in signatures[nm] if str(g) in var_pos]
+        rows.extend(gi)
+        cols.extend([j] * len(gi))
+        kcount[j] = len(gi)
+    M = sp.csr_matrix((np.ones(len(rows), dtype=np.float32), (rows, cols)),
+                      shape=(G, nS))
+
+    Xk = X.tocsr() if sp.issparse(X) else sp.csr_matrix(X)
+    nk = Xk.shape[0]
+
+    uniq = np.array(sorted(set(L.tolist())), dtype=int)
+    lpos = {int(v): i for i, v in enumerate(uniq)}
+    lidx = np.array([lpos[int(v)] for v in L], dtype=np.int64)
+    nL = len(uniq)
+    lay_sum = np.zeros((nL, nS), dtype=np.float64)
+    lay_cnt = np.zeros(nL, dtype=np.int64)
+    mr = int(max_rank)
+
+    for start in range(0, nk, chunk):
+        stop = min(start + chunk, nk)
+        block = np.asarray(Xk[start:stop].todense(), dtype=np.float32)
+        b, g = block.shape
+        mr_eff = max(1, min(mr, g))
+        order = np.argsort(-block, axis=1, kind="stable")
+        ranks = np.empty((b, g), dtype=np.float32)
+        rr = np.arange(b)[:, None]
+        ranks[rr, order] = np.arange(1, g + 1, dtype=np.float32)[None, :]
+        np.minimum(ranks, mr_eff + 1, out=ranks)
+        sumranks = np.asarray(M.T.dot(ranks.T)).T            # (b x nS)
+        sc_blk = 1.0 - (sumranks - kcount * (kcount + 1) / 2.0) / (kcount * mr_eff)
+        np.add.at(lay_sum, lidx[start:stop], sc_blk.astype(np.float64))
+        lay_cnt += np.bincount(lidx[start:stop], minlength=nL)
+        del block, order, ranks, sumranks, sc_blk
+
+    lay_mean = lay_sum / np.maximum(lay_cnt, 1)[:, None]
+    prof = pd.DataFrame(lay_mean, columns=names)
+    prof.insert(0, "layer", uniq)
+    prof["n_cells"] = lay_cnt
+    if sample is not None:
+        prof["sample"] = sample
+    if extra:
+        for k, v in extra.items():
+            prof[k] = v
+    return prof
+
+
+def _to_dense(block):
+    """Densify a sparse row-block; pass dense arrays through unchanged."""
+    todense = getattr(block, "todense", None)
+    return todense() if todense is not None else block

@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
-from scipy.stats import t, norm, mannwhitneyu, ttest_ind, chi2, rankdata, kruskal
+from scipy.stats import (t, norm, mannwhitneyu, ttest_ind, chi2, rankdata,
+                         kruskal, wilcoxon)
 
 # Test name -> human-readable label used for the p-value axis.
 PVALUE_TEST_LABELS = {
@@ -1493,3 +1494,202 @@ def gradient_cluster_mass_screen(
     long_df = pd.DataFrame(rows)
     wide_df = pd.DataFrame(wide)
     return dict(thr=thr, z=z_obs, long=long_df, wide=wide_df, band_mode=band_mode)
+
+
+# ---------------------------------------------------------------------------
+# H-Pathway Summary: distance-stratified pathway/signature grid + FDR
+# ---------------------------------------------------------------------------
+def benjamini_hochberg(pvals):
+    """Benjamini-Hochberg FDR for a 1-D array of p-values (NaN-safe).
+
+    NaNs are ignored and returned as NaN; finite p-values are BH-adjusted with
+    the usual monotone step-up and clipped to ``[0, 1]``. Thin public wrapper
+    around the inline correction used throughout :mod:`hplot.stats` so callers
+    do not need to re-implement it.
+
+    Parameters
+    ----------
+    pvals : array-like
+        Raw p-values.
+
+    Returns
+    -------
+    numpy.ndarray
+        BH-adjusted q-values, same shape as ``pvals``.
+    """
+    return _adjust_pvalues(np.asarray(pvals, dtype=float), "fdr_bh")
+
+
+def _pool_score_grid(profiles, path_names, grid, *, sample_col, layer_col,
+                     score_agg="median"):
+    """Pooled score per (layer, pathway): mean across slides of each slide's
+    per-layer aggregate (equal weight per slide)."""
+    gpos = {int(L): i for i, L in enumerate(grid)}
+    nG, nP = len(grid), len(path_names)
+    out = np.full((nG, nP), np.nan)
+    for j, nm in enumerate(path_names):
+        piv = profiles.pivot_table(index=sample_col, columns=layer_col,
+                                   values=nm, aggfunc=score_agg)
+        for L in grid:
+            if L in piv.columns:
+                col = piv[L].to_numpy(dtype=float)
+                if np.isfinite(col).any():
+                    out[gpos[int(L)], j] = np.nanmean(col)
+    return out
+
+
+def _deviation_fdr_grid(profiles, path_names, grid, *, sample_col, layer_col,
+                        baseline_window="far", min_baseline_layers=3,
+                        min_per_group=3, alternative="two-sided", verbose=True):
+    """Per (layer, pathway) deviation FDR: per-slide deviation from a baseline
+    region (``deviation_tensor``) tested per layer with a signed-rank Wilcoxon,
+    BH-corrected over the whole grid."""
+    nG, nP = len(grid), len(path_names)
+    vals, lays = [], []
+    for _sid, sub in profiles.groupby(sample_col):
+        sub = sub.sort_values(layer_col)
+        vals.append(sub[path_names].to_numpy(dtype=float))
+        lays.append(sub[layer_col].to_numpy(dtype=int))
+    Ddev = deviation_tensor(vals, lays, grid, baseline_window=baseline_window,
+                            min_baseline_layers=min_baseline_layers,
+                            verbose=verbose)
+    p_dev = np.full((nG, nP), np.nan)
+    for i in range(nG):
+        for j in range(nP):
+            x = Ddev[:, i, j]
+            x = x[np.isfinite(x)]
+            if x.size >= min_per_group and np.any(x != 0):
+                try:
+                    p_dev[i, j] = wilcoxon(x, zero_method="wilcox",
+                                           alternative=alternative).pvalue
+                except ValueError:
+                    p_dev[i, j] = np.nan
+    fdr = np.full(nG * nP, np.nan)
+    flat = p_dev.ravel()
+    mask = np.isfinite(flat)
+    fdr[mask] = benjamini_hochberg(flat[mask])
+    return fdr.reshape(nG, nP)
+
+
+def hpathway_summary_grid(profiles, *, path_names, grid,
+                          sample_col="sample", layer_col="layer",
+                          score_agg="median", deviation="far",
+                          min_baseline_layers=3, min_per_group=3,
+                          deviation_alternative="two-sided",
+                          contrasts=None, long_df=None,
+                          value_col="score", pathway_col="pathway",
+                          verbose=True):
+    """Build the tidy (pathway x layer) grid that feeds ``plot_hpathway_summary``.
+
+    Given per-slide, per-layer pathway/signature profiles this assembles the
+    long grid the dotplot consumes, so a user does not re-implement the pooled
+    score and the per-layer significance tests by hand:
+
+    * ``score``     : pooled score = mean across slides of each slide's
+      per-layer ``score_agg`` (equal weight per slide);
+    * ``fdr_dev``   : deviation FDR = per-slide deviation from a baseline region
+      (see :func:`deviation_tensor`) tested per layer with a signed-rank
+      Wilcoxon, BH-corrected over the grid;
+    * ``fdr_<name>``: one Kruskal-Wallis between-group contrast per entry in
+      ``contrasts``, BH-corrected over the grid (with the raw ``p_<name>``).
+
+    Parameters
+    ----------
+    profiles : pandas.DataFrame
+        Wide per-(sample, layer) table with one column per pathway in
+        ``path_names`` plus ``sample_col`` and ``layer_col``.
+    path_names : sequence[str]
+        Pathway/signature column names to place on the grid.
+    grid : array-like[int]
+        Layer coordinates of the analysis window (the tested layers).
+    sample_col, layer_col : str
+        Identifier columns in ``profiles``.
+    score_agg : str
+        Per-slide per-layer aggregate for the pooled score. Default ``"median"``.
+    deviation : None | "window" | "far" | "core" | (int, int)
+        Baseline reference-region selector for the deviation FDR
+        (see :func:`deviation_tensor`). ``None`` skips ``fdr_dev``.
+    min_baseline_layers, min_per_group : int
+        Deviation baseline floor and minimum non-NaN samples per test.
+    deviation_alternative : str
+        Wilcoxon alternative for the deviation test.
+    contrasts : dict[str, tuple[str, sequence]] | None
+        ``{name: (group_col, groups)}``; each adds ``p_<name>`` and
+        ``fdr_<name>`` from a per-layer Kruskal-Wallis test across ``groups``.
+    long_df : pandas.DataFrame | None
+        Tidy long table (``pathway_col``, ``layer_col``, ``value_col`` and the
+        contrast group columns) used for the contrasts. If ``None`` it is
+        melted from ``profiles`` (id columns = every non-pathway column).
+    value_col, pathway_col : str
+        Value / pathway column names in ``long_df``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Long grid with columns ``pathway, layer, score`` (+ ``fdr_dev`` and
+        ``p_<name>``/``fdr_<name>`` per contrast), one row per (pathway, layer).
+    """
+    path_names = list(path_names)
+    grid = [int(L) for L in grid]
+    nG, nP = len(grid), len(path_names)
+
+    score_grid = _pool_score_grid(profiles, path_names, grid,
+                                   sample_col=sample_col, layer_col=layer_col,
+                                   score_agg=score_agg)
+
+    if deviation is not None:
+        fdr_dev = _deviation_fdr_grid(
+            profiles, path_names, grid, sample_col=sample_col,
+            layer_col=layer_col, baseline_window=deviation,
+            min_baseline_layers=min_baseline_layers, min_per_group=min_per_group,
+            alternative=deviation_alternative, verbose=verbose)
+    else:
+        fdr_dev = None
+
+    rows = []
+    for i, L in enumerate(grid):
+        for j, nm in enumerate(path_names):
+            rec = dict(pathway=nm, layer=int(L), score=score_grid[i, j])
+            if fdr_dev is not None:
+                rec["fdr_dev"] = fdr_dev[i, j]
+            rows.append(rec)
+    grid_df = pd.DataFrame(rows)
+
+    if not contrasts:
+        return grid_df
+
+    if long_df is None:
+        id_cols = [c for c in profiles.columns if c not in path_names]
+        long_df = profiles.melt(id_vars=id_cols, value_vars=path_names,
+                                var_name=pathway_col, value_name=value_col)
+
+    for cname, (group_col, groups) in contrasts.items():
+        parts = []
+        for nm in path_names:
+            sub = long_df[long_df[pathway_col] == nm]
+            try:
+                kp = compute_layer_kruskal_pvalues(
+                    sub, value_col, layer_col, group_col,
+                    groups=tuple(groups), min_n=min_per_group, correction=None)
+            except Exception:
+                continue
+            kp = kp[[layer_col, "p_value"]].copy()
+            kp[pathway_col] = nm
+            parts.append(kp)
+        pcol, fcol = f"p_{cname}", f"fdr_{cname}"
+        if parts:
+            merged = pd.concat(parts, ignore_index=True)
+            merged = merged.rename(columns={"p_value": pcol, layer_col: "layer",
+                                            pathway_col: "pathway"})
+            grid_df = grid_df.merge(merged[["layer", "pathway", pcol]],
+                                    on=["layer", "pathway"], how="left")
+            m = grid_df[pcol].notna().to_numpy()
+            grid_df[fcol] = np.nan
+            if m.any():
+                grid_df.loc[m, fcol] = benjamini_hochberg(
+                    grid_df.loc[m, pcol].to_numpy())
+        else:
+            grid_df[pcol] = np.nan
+            grid_df[fcol] = np.nan
+
+    return grid_df
