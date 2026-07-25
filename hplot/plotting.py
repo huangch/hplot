@@ -1836,6 +1836,10 @@ def plot_hpathway_summary(
     alpha_range=(0.12, 1.0),
     neglog_fdr_cap=3.0,
     order_by_peak=True,
+    direction_col=None,
+    direction_labels=None,
+    inner_triangle_frac=0.34,
+    direction_as_shape=False,
     ax=None,
     title=None,
     savepath=None,
@@ -1871,6 +1875,25 @@ def plot_hpathway_summary(
         Optional physical-distance map from :func:`build_layer_distance_map`;
         when supplied the x-axis gains µm tick labels via
         :func:`add_border_distance_axis`.
+    direction_col : str | None
+        Optional signed column (e.g. ``dir_contrast`` from
+        :func:`hplot.hpathway_summary_grid`, = mean(group2) − mean(group1)).
+        When given, a size-matched triangle is drawn inside each dot: **up** if
+        the value is positive (second group higher), **down** if negative. Cells
+        with 0/NaN get no triangle.
+    direction_labels : tuple[str, str] | None
+        ``(down_label, up_label)`` for the direction legend, e.g.
+        ``("SD higher", "relapse higher")``. Defaults to generic 1st/2nd-group
+        wording.
+    inner_triangle_frac : float
+        Triangle area as a fraction of its host dot (so it sits inside it).
+        Used only when ``direction_as_shape=False``.
+    direction_as_shape : bool
+        If True, the mark *shape itself* encodes direction: a cell with a signed
+        direction is drawn as an up/down triangle (up = second group higher),
+        while a cell with no direction (NaN or exactly 0) stays a circle.
+        Colour/alpha/size/ring are unchanged, so only the shape differs. If
+        False (default), a small triangle is drawn *inside* each circle instead.
     savepath : str | pathlib.Path | None
         Optional PNG output path. An SVG sibling is also written.
 
@@ -1925,6 +1948,12 @@ def plot_hpathway_summary(
     S = piv_s.to_numpy(dtype=float)
     F = piv_f.to_numpy(dtype=float)
 
+    # optional signed direction (e.g. dir_contrast = mean(group2) - mean(group1))
+    D = None
+    if direction_col is not None and direction_col in grid_df.columns:
+        piv_d = grid_df.pivot(index=path_col, columns=layer_col, values=direction_col)
+        D = piv_d.reindex(index=paths, columns=layers).to_numpy(dtype=float)
+
     # Row-relative sizing: normalize each pathway row to [0, 1] independently so
     # within-pathway layer differences span the full size range.
     row_lo = np.nanmin(S, axis=1, keepdims=True)
@@ -1934,6 +1963,7 @@ def plot_hpathway_summary(
                            where=row_span > 1e-9)
 
     xs, ys, sizes, alphas, rings = [], [], [], [], []
+    dirs = []
     for iy, p in enumerate(paths):
         for ix, L in enumerate(layers):
             if not np.isfinite(S[iy, ix]):
@@ -1948,6 +1978,7 @@ def plot_hpathway_summary(
                 a = alpha_range[0]
             alphas.append(float(np.clip(a, alpha_range[0], alpha_range[1])))
             rings.append(bool(np.isfinite(fv) and fv < fdr_threshold))
+            dirs.append(float(D[iy, ix]) if D is not None else np.nan)
 
     ax_cbar = None
     fig = None
@@ -1987,13 +2018,57 @@ def plot_hpathway_summary(
     for _k, _L in enumerate(xs):
         rgba[_k, :3] = _str_rgb if _L > 0 else _tum_rgb
     rgba[:, 3] = alphas
-    ax.scatter(xs, ys, s=sizes, c=rgba, linewidths=0, zorder=3)
-    _rx = [x for x, r in zip(xs, rings) if r]
-    _ry = [y for y, r in zip(ys, rings) if r]
-    _rs = [z for z, r in zip(sizes, rings) if r]
-    if _rx:
-        ax.scatter(_rx, _ry, s=_rs, facecolors="none", edgecolors="k",
-                   linewidths=0.7, zorder=4)
+
+    _xs = np.asarray(xs, dtype=float)
+    _ys = np.asarray(ys, dtype=float)
+    _sz = np.asarray(sizes, dtype=float)
+    _rg = np.asarray(rings, dtype=bool)
+    _dr = np.asarray(dirs, dtype=float)
+
+    if direction_as_shape and D is not None:
+        # Hybrid glyph: a cell that HAS a signed direction becomes a triangle
+        # (up = second group higher, down = first group higher); a cell with no
+        # direction (NaN or exactly 0) stays a circle. Colour/alpha/size/ring
+        # encode side/FDR/score exactly as for circles, so only the mark shape
+        # differs. This keeps direction honest (no fake orientation) while the
+        # circle transparently means "no directional signal".
+        _is_dir = np.isfinite(_dr) & (_dr != 0.0)
+        _groups = [(~_is_dir, "o"), (_is_dir & (_dr > 0), "^"), (_is_dir & (_dr < 0), "v")]
+        for _mask, _mk in _groups:
+            if _mask.any():
+                ax.scatter(_xs[_mask], _ys[_mask], s=_sz[_mask], c=rgba[_mask],
+                           marker=_mk, linewidths=0, zorder=3)
+                _rm = _mask & _rg
+                if _rm.any():
+                    ax.scatter(_xs[_rm], _ys[_rm], s=_sz[_rm], marker=_mk,
+                               facecolors="none", edgecolors="k",
+                               linewidths=0.7, zorder=4)
+    else:
+        ax.scatter(xs, ys, s=sizes, c=rgba, linewidths=0, zorder=3)
+        _rx = [x for x, r in zip(xs, rings) if r]
+        _ry = [y for y, r in zip(ys, rings) if r]
+        _rs = [z for z, r in zip(sizes, rings) if r]
+        if _rx:
+            ax.scatter(_rx, _ry, s=_rs, facecolors="none", edgecolors="k",
+                       linewidths=0.7, zorder=4)
+
+        # optional direction glyph: a size-matched triangle drawn INSIDE each dot
+        # pointing up when the signed contrast (direction_col) is positive
+        # (second group higher) and down when negative. White with a thin dark
+        # edge to read on either side colour. Cells with 0/NaN get no glyph.
+        if D is not None:
+            _tf = float(inner_triangle_frac)
+            _up = [(x, y, s) for x, y, s, d in zip(xs, ys, sizes, dirs)
+                   if np.isfinite(d) and d > 0]
+            _dn = [(x, y, s) for x, y, s, d in zip(xs, ys, sizes, dirs)
+                   if np.isfinite(d) and d < 0]
+            for _pts, _mk in ((_up, "^"), (_dn, "v")):
+                if _pts:
+                    _tx = [q[0] for q in _pts]
+                    _ty = [q[1] for q in _pts]
+                    _ts = [max(4.0, q[2] * _tf) for q in _pts]
+                    ax.scatter(_tx, _ty, s=_ts, marker=_mk, c="white",
+                               edgecolors="0.15", linewidths=0.3, zorder=5)
 
     ax.axvline(0.0, color="0.4", ls="--", lw=0.9, zorder=1)
     ax.set_yticks(range(len(paths)))
@@ -2020,6 +2095,29 @@ def plot_hpathway_summary(
                      bbox_to_anchor=(1.01, 1.0), frameon=False, labelspacing=1.1,
                      fontsize=10, title_fontsize=11)
     ax.add_artist(leg1)
+
+    # direction key (only when a signed direction is drawn)
+    if D is not None:
+        if direction_labels and len(direction_labels) == 2:
+            _dn_lbl, _up_lbl = direction_labels
+        else:
+            _dn_lbl, _up_lbl = "1st group higher", "2nd group higher"
+        _dir_handles = [
+            Line2D([0], [0], marker="^", linestyle="none", markerfacecolor="white",
+                   markeredgecolor="0.15", markeredgewidth=0.6, markersize=9,
+                   label=f"\u25b2 {_up_lbl}"),
+            Line2D([0], [0], marker="v", linestyle="none", markerfacecolor="white",
+                   markeredgecolor="0.15", markeredgewidth=0.6, markersize=9,
+                   label=f"\u25bc {_dn_lbl}"),
+        ]
+        if direction_as_shape:
+            _dir_handles.append(
+                Line2D([0], [0], marker="o", linestyle="none", markerfacecolor="0.6",
+                       markeredgecolor="none", markersize=9, label="\u25cf no direction"))
+        leg_dir = ax.legend(handles=_dir_handles, title="Direction", loc="center left",
+                            bbox_to_anchor=(1.01, 0.55), frameon=False,
+                            fontsize=10, title_fontsize=11)
+        ax.add_artist(leg_dir)
 
     # FDR key: two horizontal alpha-ramp colorbars BELOW the panel (one per
     # border side); discrete right-side legend is the fallback when no colour-

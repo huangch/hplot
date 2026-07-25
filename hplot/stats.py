@@ -1665,6 +1665,8 @@ def hpathway_summary_grid(profiles, *, path_names, grid,
 
     for cname, (group_col, groups) in contrasts.items():
         parts = []
+        dir_parts = []
+        groups = tuple(groups)
         for nm in path_names:
             sub = long_df[long_df[pathway_col] == nm]
             try:
@@ -1676,7 +1678,18 @@ def hpathway_summary_grid(profiles, *, path_names, grid,
             kp = kp[[layer_col, "p_value"]].copy()
             kp[pathway_col] = nm
             parts.append(kp)
-        pcol, fcol = f"p_{cname}", f"fdr_{cname}"
+            # Signed direction for two-group contrasts: mean(groups[1]) minus
+            # mean(groups[0]) per layer (equal weight per sample), so a plot can
+            # show which side is higher. Undefined for >2 groups -> skipped.
+            if len(groups) == 2:
+                gm = (sub[sub[group_col].isin(groups)]
+                      .groupby([layer_col, group_col])[value_col].mean()
+                      .unstack(group_col))
+                if set(groups).issubset(gm.columns):
+                    dd = (gm[groups[1]] - gm[groups[0]]).rename("dir").reset_index()
+                    dd[pathway_col] = nm
+                    dir_parts.append(dd)
+        pcol, fcol, dcol = f"p_{cname}", f"fdr_{cname}", f"dir_{cname}"
         if parts:
             merged = pd.concat(parts, ignore_index=True)
             merged = merged.rename(columns={"p_value": pcol, layer_col: "layer",
@@ -1691,5 +1704,12 @@ def hpathway_summary_grid(profiles, *, path_names, grid,
         else:
             grid_df[pcol] = np.nan
             grid_df[fcol] = np.nan
+        if dir_parts:
+            dmerged = pd.concat(dir_parts, ignore_index=True)
+            dmerged = dmerged.rename(columns={layer_col: "layer",
+                                              pathway_col: "pathway"})
+            grid_df = grid_df.merge(dmerged[["layer", "pathway", "dir"]],
+                                    on=["layer", "pathway"], how="left")
+            grid_df = grid_df.rename(columns={"dir": dcol})
 
     return grid_df
