@@ -358,6 +358,79 @@ def pathway_layer_profile_adata(
     return prof
 
 
+def pathway_layer_profile_h5ad(
+    path,
+    signatures,
+    *,
+    base_col,
+    h5ad_name="annotated.h5ad",
+    spatial_key="spatial",
+    k=2,
+    n_min=10,
+    ratio=0.2,
+    max_edge=25.0,
+    sample=None,
+    extra=None,
+    max_rank=1500,
+    chunk=8000,
+    cache_path=None,
+    force=False,
+):
+    """Read an ``.h5ad`` from disk and return its border-layer pathway profile.
+
+    Thin file/cache adapter over :func:`pathway_layer_profile_adata`: it reads
+    the slide, runs the full H-Plot geometry + UCell scoring, and (optionally)
+    joblib-caches the result. The only thing left for the caller is supplying
+    dataset-specific ``extra`` labels (e.g. clinical status), which the package
+    cannot know.
+
+    Parameters
+    ----------
+    path : str
+        Either an ``.h5ad`` file, or a directory containing ``h5ad_name``.
+    h5ad_name : str
+        File name to read when ``path`` is a directory. Default
+        ``"annotated.h5ad"``.
+    sample : hashable | None
+        Slide id attached to every row; defaults to the containing folder name.
+    cache_path : str | None
+        If given, the profile is loaded from here when present (unless
+        ``force``) and written here after computing.
+    force : bool
+        Recompute and overwrite the cache even if it exists.
+
+    Other parameters are forwarded to :func:`pathway_layer_profile_adata`.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per layer, as in :func:`pathway_layer_profile`.
+    """
+    import os
+
+    if cache_path and (not force) and os.path.exists(cache_path):
+        import joblib
+        return joblib.load(cache_path)
+
+    import anndata as ad
+
+    fp = path if os.path.isfile(path) else os.path.join(path, h5ad_name)
+    if sample is None:
+        sample = os.path.basename(os.path.dirname(fp)) or os.path.basename(fp)
+    adata = ad.read_h5ad(fp)
+    prof = pathway_layer_profile_adata(
+        adata, signatures, base_col=base_col, spatial_key=spatial_key,
+        k=k, n_min=n_min, ratio=ratio, max_edge=max_edge,
+        sample=sample, extra=extra, max_rank=max_rank, chunk=chunk,
+    )
+    del adata
+    if cache_path:
+        import joblib
+        os.makedirs(os.path.dirname(cache_path) or ".", exist_ok=True)
+        joblib.dump(prof, cache_path, compress=3)
+    return prof
+
+
 def _to_dense(block):
     """Densify a sparse row-block; pass dense arrays through unchanged."""
     todense = getattr(block, "todense", None)
