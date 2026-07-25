@@ -2095,7 +2095,7 @@ def plot_hpathway_summary(
     # significant dot.
     if _rg.any():
         ax.scatter(_xs[_rg], _ys[_rg], s=_sz[_rg], marker="o",
-                   facecolors="none", edgecolors="k", linewidths=0.7, zorder=4)
+                   facecolors="none", edgecolors="k", linewidths=1.5, zorder=4)
 
     ax.axvline(0.0, color="0.4", ls="--", lw=1.8, zorder=1)
     ax.set_yticks(range(len(paths)))
