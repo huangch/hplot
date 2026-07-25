@@ -1587,7 +1587,7 @@ def hpathway_summary_grid(profiles, *, path_names, grid,
                           contrasts=None, long_df=None,
                           value_col="score", pathway_col="pathway",
                           verbose=True):
-    """Build the tidy (pathway x layer) grid that feeds ``plot_hpathway_summary``.
+    """Build the tidy (pathway x layer) grid that feeds ``plot_hpathway_dotplot``.
 
     Given per-slide, per-layer pathway/signature profiles this assembles the
     long grid the dotplot consumes, so a user does not re-implement the pooled

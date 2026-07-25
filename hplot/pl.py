@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from ._serial import deserialize
 from .io import read_hplot_csv
-from .plotting import plot_hplot, plot_hpathway_summary
+from .plotting import plot_hplot, plot_hpathway_dotplot
 
 
 def hplot(adata, *, key="hplot", ax=None, ci_show=True, **kwargs):
@@ -52,11 +52,11 @@ def hpathway_summary_from_csv(path, *, fdr_col="fdr_dev", ax=None, **kwargs):
     ``score`` and one or more FDR columns (``fdr_dev``, ``fdr_contrast``,
     ``fdr_treatment``, ``fdr_strata4``); ``fdr_col`` selects which one drives
     the dot alpha and rings. Extra keyword arguments are forwarded to
-    :func:`hplot.plotting.plot_hpathway_summary`.
+    :func:`hplot.plotting.plot_hpathway_dotplot`.
 
-    Returns the dict from :func:`hplot.plotting.plot_hpathway_summary`.
+    Returns the dict from :func:`hplot.plotting.plot_hpathway_dotplot`.
     """
     import pandas as pd
 
     grid_df = pd.read_csv(path)
-    return plot_hpathway_summary(grid_df, fdr_col=fdr_col, ax=ax, **kwargs)
+    return plot_hpathway_dotplot(grid_df, fdr_col=fdr_col, ax=ax, **kwargs)

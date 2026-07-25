@@ -194,14 +194,14 @@ class HPlot:
 
         Requires a prior ``fit(..., smoother="gam", group=...)`` with two
         groups. Computes the layer-wise difference via :meth:`gam_delta` and
-        renders it with :func:`hplot.plotting.plot_delta_hplot_gam`.
+        renders it with :func:`hplot.plotting.plot_hplot_gam_delta`.
 
         The high/low fill colours are taken from ``self.color_map`` when it
         supplies the two group labels; otherwise the plotting defaults apply.
         Extra keyword arguments (``ref_band``, ``ref_peak``, ``xlim``, ...) are
-        forwarded to :func:`hplot.plotting.plot_delta_hplot_gam`.
+        forwarded to :func:`hplot.plotting.plot_hplot_gam_delta`.
         """
-        from .plotting import plot_delta_hplot_gam
+        from .plotting import plot_hplot_gam_delta
         if not self.gam_curves_:
             raise RuntimeError("plot_delta() requires fit(..., smoother='gam').")
         if self.gam_grid_ is None:
@@ -224,7 +224,7 @@ class HPlot:
         if low_label in cm:
             color_kwargs["low_color"] = cm[low_label]
         color_kwargs.update(kwargs)
-        return plot_delta_hplot_gam(
+        return plot_hplot_gam_delta(
             self.gam_grid_, *diff, ax=ax,
             group_labels=(low_label, high_label), **color_kwargs,
         )

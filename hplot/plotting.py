@@ -492,7 +492,7 @@ def plot_hplot_gam(
     """Draw a GAM-smoothed H-plot (**H-GAM Plot**) panel from per-group smooths.
 
     Renders the penalised-spline smooth of each group with its pointwise CI
-    band, i.e. the top panel that pairs with :func:`plot_delta_hplot_gam`. This
+    band, i.e. the top panel that pairs with :func:`plot_hplot_gam_delta`. This
     is the lightweight, grid-friendly functional counterpart to
     ``HPlot.fit(smoother="gam").plot()`` — it draws only the smooth curves (no
     raw layer means, no secondary distance axis) so it composes cleanly into a
@@ -591,7 +591,7 @@ def plot_hplot_gam(
     return ax
 
 
-def plot_delta_hplot_gam(
+def plot_hplot_gam_delta(
     grid,
     diff_pred,
     ci_lower,
@@ -851,7 +851,7 @@ def _hloci_dir_code(directions):
     return np.asarray(codes, dtype=int)
 
 
-def plot_hloci_summary(
+def plot_hloci_strip(
     positions,
     directions,
     *,
@@ -1069,7 +1069,7 @@ def plot_hloci_bands(
     is the bar-chart counterpart of the direction-shaded ``axvspan`` band used
     on the per-feature H-plots (i.e. it shows *where* the band sits and *how
     wide* it is — the cluster width — rather than mapping the mass to a strip
-    thickness as :func:`plot_hloci_summary` does).
+    thickness as :func:`plot_hloci_strip` does).
 
     Parameters
     ----------
@@ -1433,7 +1433,7 @@ def add_border_distance_axis(
     return top
 
 
-def plot_hloci_fdr_summary(
+def plot_hloci_fdr(
     rank,
     label_col,
     *,
@@ -1655,7 +1655,7 @@ def _hloci_bidir_order(n, elev_center, depr_center, elev_mass, depr_mass, sort_b
     return np.argsort(k, kind="stable")
 
 
-def plot_hloci_bands_bidirectional(
+def plot_hloci_bands_bidir(
     labels,
     elev_lo,
     elev_hi,
@@ -1800,22 +1800,6 @@ def plot_hloci_bands_bidirectional(
     return ax
 
 
-# ── Family-consistent naming aliases ──────────────────────────────────────
-# The GAM-smoothed H-plot panels are named the "H-GAM Plot" (per-group smooth ±
-# CI) and the "H-ΔGAM Plot" (high−low difference ± propagated CI). These
-# aliases expose those names while keeping the original ``plot_hplot_gam`` /
-# ``plot_delta_hplot_gam`` entry points for backward compatibility.
-plot_hgam = plot_hplot_gam
-plot_hgam_delta = plot_delta_hplot_gam
-plot_delta_hgam = plot_delta_hplot_gam  # legacy alias
-
-# The location-of-the-border-band panel is named the "H-Loci Summary" (each row
-# is one feature's H-Locus: position + cluster-mass thickness + direction glyph).
-# ``plot_signpost`` is retained as a backward-compatible alias of the earlier
-# working name.
-plot_signpost = plot_hloci_summary
-
-
 def _hpathway_cluster_mass_peak(row, layers):
     """Peak layer inside a pathway row's strongest contiguous above-median run.
 
@@ -1849,7 +1833,7 @@ def _hpathway_cluster_mass_peak(row, layers):
     return float(layers[best_lo + int(np.argmax(seg))])
 
 
-def plot_hpathway_summary(
+def plot_hpathway_dotplot(
     grid_df,
     *,
     score_col="score",
@@ -2293,3 +2277,118 @@ def plot_hpathway_summary(
 
     return {"figure": fig, "ax": ax, "colorbar_axis": ax_cbar, "selected": paths}
 
+
+
+def plot_hloci_dotplot(
+    grid_df,
+    *,
+    feature_col="feature",
+    layer_col="layer",
+    score_col="score",
+    fdr_col="fdr",
+    direction_col="direction",
+    fdr_threshold=0.05,
+    select_fdr_below=None,
+    max_rows=50,
+    layer_limits=None,
+    layer_to_distance=None,
+    size_range=(12.0, 400.0),
+    side_colorbar=True,
+    cell_in=0.30,
+    alpha_range=(0.25, 1.0),
+    neglog_fdr_cap=3.0,
+    order_by_peak=True,
+    direction_labels=None,
+    elevated_color="#d62728",
+    depressed_color="#1f77b4",
+    nodir_color="0.7",
+    direction_alpha=0.9,
+    ax=None,
+    title=None,
+    savepath=None,
+    dpi=240,
+):
+    """H-Loci Summary (dotplot mode): feature activity across the signed border axis.
+
+    A dotplot over a (feature x layer) grid, where features can be genes, cell
+    types, or ligand-receptor pairs. This complements :func:`plot_hloci_bands`
+    by showing the *full layer profile* rather than just the dominant cluster
+    band — revealing secondary peaks that the band-mode visualization collapses.
+
+    Visual encoding:
+    - **Dot size** encodes the row-relative score (normalized within each feature)
+    - **Dot colour** encodes direction when ``direction_col`` is supplied
+      (``elevated_color`` for positive, ``depressed_color`` for negative)
+    - **Dot alpha** ramps with ``-log10(FDR)``
+    - **Black ring** marks cells with FDR below ``fdr_threshold``
+
+    The input ``grid_df`` is a tidy table with one row per (feature, layer),
+    similar to the H-Pathway Summary grid but for genes, cell types, or pairs.
+
+    Parameters
+    ----------
+    grid_df : pandas.DataFrame
+        Tidy (feature x layer) grid with score and FDR columns.
+    feature_col : str
+        Column name for the feature label (gene, cell type, or pair).
+    layer_col : str
+        Column name for the border layer index.
+    score_col : str
+        Column name for the activity/mass score at each layer.
+    fdr_col : str
+        Column name for the FDR/p-value at each layer.
+    direction_col : str | None
+        Optional signed column for direction (elevated vs depressed).
+    select_fdr_below : float | None
+        Keep only features with FDR below this value in >= 1 shown layer.
+    max_rows : int | None
+        Cap on the number of features drawn (best min-FDR first).
+    layer_limits : tuple[float, float] | None
+        (min_layer, max_layer) to display.
+    layer_to_distance : Mapping[int, float] | None
+        Physical-distance map for µm tick labels.
+    direction_labels : tuple[str, str] | None
+        ``(depressed_label, elevated_label)`` for the direction legend.
+    savepath : str | pathlib.Path | None
+        Optional PNG output path. An SVG sibling is also written.
+
+    Returns
+    -------
+    dict | None
+        ``{"figure", "ax", "colorbar_axis", "selected"}``; ``None`` when no
+        feature passes selection.
+
+    See Also
+    --------
+    plot_hloci_bands : Band-mode H-Loci Summary (shows dominant cluster only).
+    plot_hpathway_dotplot : H-Pathway Summary dotplot for pathway signatures.
+    """
+    # Delegate to plot_hpathway_dotplot with H-Loci-appropriate column names.
+    return plot_hpathway_dotplot(
+        grid_df,
+        path_col=feature_col,
+        layer_col=layer_col,
+        score_col=score_col,
+        fdr_col=fdr_col,
+        fdr_threshold=fdr_threshold,
+        select_fdr_below=select_fdr_below,
+        max_rows=max_rows,
+        layer_limits=layer_limits,
+        layer_to_distance=layer_to_distance,
+        size_range=size_range,
+        side_colorbar=side_colorbar,
+        cell_in=cell_in,
+        alpha_range=alpha_range,
+        neglog_fdr_cap=neglog_fdr_cap,
+        order_by_peak=order_by_peak,
+        direction_col=direction_col,
+        direction_labels=direction_labels,
+        elevated_color=elevated_color,
+        depressed_color=depressed_color,
+        nodir_color=nodir_color,
+        direction_alpha=direction_alpha,
+        ax=ax,
+        title=title,
+        savepath=savepath,
+        dpi=dpi,
+    )

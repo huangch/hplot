@@ -467,13 +467,13 @@ def _cmd_loci(args):
             labels=df[args.label_col], sort=sort, ax=ax,
             xlabel="border layer L", title=args.title)
     elif args.kind == "summary":
-        hplot.plot_hloci_summary(
+        hplot.plot_hloci_strip(
             df[args.peak_col], df[args.dir_col],
             weights=df[args.mass_col] if args.mass_col in df.columns else None,
             labels=df[args.label_col], ax=ax,
             xlabel="border layer L", title=args.title)
     else:  # bidirectional (wide schema)
-        hplot.plot_hloci_bands_bidirectional(
+        hplot.plot_hloci_bands_bidir(
             df[args.label_col],
             df["elevated_start"], df["elevated_end"],
             df["depressed_start"], df["depressed_end"],
