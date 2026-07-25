@@ -2118,7 +2118,7 @@ def plot_hpathway_summary(
                            markerfacecolor="0.5", markeredgecolor="none",
                            markersize=np.sqrt(np.interp(v, (0.0, 1.0), size_range)),
                            label=lbl) for v, lbl in zip(size_ref, size_labels)]
-    leg1 = ax.legend(handles=size_handles, title="Relative score", loc="upper left",
+    leg1 = ax.legend(handles=size_handles, title="relative score", loc="upper left",
                      bbox_to_anchor=(1.01, 1.0), frameon=False, labelspacing=1.1,
                      fontsize=10, title_fontsize=11)
     ax.add_artist(leg1)
@@ -2194,7 +2194,7 @@ def plot_hpathway_summary(
                          clip_on=False)
             ax_cbar.text(_x, _bot_y, _lbl, transform=ax_cbar.transAxes, ha="center", va="bottom",
                          fontsize=_fs_num, color="0.35", clip_on=False)
-        ax_cbar.text(_sz_x0 + 0.056, _lab_y, "Relative score", transform=ax_cbar.transAxes,
+        ax_cbar.text(_sz_x0 + 0.056, _lab_y, "relative score", transform=ax_cbar.transAxes,
                      ha="center", va="bottom", fontsize=_fs_title, color="0.25", clip_on=False)
 
         # (2) two side-by-side alpha-ramp colorbars: elevated (red) and depressed (blue)

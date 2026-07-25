@@ -9,7 +9,7 @@ at tissue boundaries**
 a Kaplan–Meier-style curve family that shows how tissue composition changes with
 signed distance from a tissue boundary (e.g. the tumour–stroma interface).
 
-> **Two ways to use hplot — pick one:**
+> **Three ways to use hplot — pick one:**
 >
 > - **You have an `AnnData`** (scanpy/squidpy user) → jump to
 >   [AnnData interface](#anndata-interface-scanpy--squidpy-users). hplot assigns
@@ -17,9 +17,12 @@ signed distance from a tissue boundary (e.g. the tumour–stroma interface).
 > - **You have a tidy table / CSV** (one row per case × layer) → use the
 >   [`HPlot` engine and CLI](#conceptual-background) documented below. This is
 >   also the reproducibility path for the paper.
+> - **You want pathway/signature-level profiling** → use the
+>   [H-Pathway Summary](#h-pathway-summary) workflow with UCell scoring and
+>   signature catalogs (MSigDB, GO).
 >
-> Both share the same statistics and plotting core; the AnnData layer is a thin
-> adapter on top of it.
+> All three share the same statistics and plotting core; the AnnData and
+> pathway layers are thin adapters on top of it.
 
 The analysis is structured in **three stages** with increasing specificity:
 
@@ -735,6 +738,122 @@ it never changes the x-limits.
 
 ---
 
+## H-Pathway Summary
+
+The H-Pathway Summary extends the single-target H-Plot to **pathway/signature-level
+profiling**. Instead of tracking one gene or cell type across layers, it profiles
+an entire gene-set catalog (e.g. MSigDB Hallmark, GO Biological Process) and
+renders the results as a compact dotplot or signpost panel.
+
+### Workflow overview
+
+```python
+import hplot
+
+# 1) Load a signature catalog (MSigDB Hallmark, GO BP, or custom GMT)
+signatures = hplot.load_catalog("msigdb")  # or "go_bp", "go_goatools"
+
+# 2) Gate signatures to genes present on your assay panel
+panel_genes = adata.var_names.tolist()
+sig_filtered = hplot.select_signatures_on_panel(signatures, panel_genes, min_genes=5)
+
+# 3) Compute per-cell UCell scores for each signature
+#    (rank-based, bounded [0, 1], memory-efficient chunking)
+scores = hplot.ucell_scores(adata.X, sig_filtered, max_rank=1500)
+
+# 4) Profile signatures across border layers
+profiles = hplot.pathway_layer_profile(
+    adata.X, layers=adata.obs["hplot_layer"].values,
+    signatures=sig_filtered, var_names=adata.var_names.tolist(),
+    sample=adata.obs["sample_id"].values,
+)
+
+# 5) Build the (pathway x layer) grid with FDR columns
+grid_df = hplot.hpathway_summary_grid(
+    profiles, path_names=list(sig_filtered.keys()),
+    grid=range(-6, 13),
+)
+
+# 6) Render the H-Pathway Summary dotplot
+ax = hplot.plot_hpathway_summary(
+    grid_df,
+    direction_col="dir_contrast",      # signed column for colour
+    fdr_col="fdr_contrast",            # FDR column for opacity + significance ring
+    select_fdr_below=0.1,              # only show significant pathways
+    max_rows=30,
+)
+```
+
+### Signature catalogs
+
+| Source | Description | Usage |
+|--------|-------------|-------|
+| `"msigdb"` | MSigDB Hallmark (50 gene sets via Enrichr) | `load_catalog("msigdb")` |
+| `"go_bp"` | GO Biological Process (via Enrichr) | `load_catalog("go_bp")` |
+| `"go_goatools"` | GO with DAG propagation (via goatools + NCBI gene2go) | `load_catalog("go_goatools")` |
+| Custom `.gmt` | Any GMT file | `hplot.read_gmt("path/to/file.gmt")` |
+
+```python
+# Write your own GMT
+hplot.write_gmt({"MySignature": ["GENE1", "GENE2", "GENE3"]}, "custom.gmt")
+
+# Filter signatures to panel genes (drops sets with < min_genes hits)
+filtered = hplot.select_signatures_on_panel(signatures, panel_genes, min_genes=5)
+```
+
+### UCell scoring
+
+`ucell_scores()` implements the UCell algorithm (rank-based signature scoring)
+with memory-efficient chunking. It processes cells in blocks, computes the rank
+matrix once per chunk, and scores all signatures in a single pass.
+
+```python
+# X: sparse or dense (n_cells x n_genes), sig_idx: {name: [gene_indices]}
+scores = hplot.ucell_scores(X, sig_idx, max_rank=1500, chunk=20000)
+# Returns {name: ndarray[float32] of shape (n_cells,)}
+```
+
+### `plot_hpathway_summary()` parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `grid_df` | — | Tidy (pathway x layer) DataFrame with score and FDR columns. |
+| `score_col` | `"score"` | Column for the row-relative score (dot size). |
+| `fdr_col` | `"fdr_dev"` | Column for FDR (dot opacity + significance ring). |
+| `path_col` | `"pathway"` | Column identifying each pathway/signature. |
+| `layer_col` | `"layer"` | Column for signed border layer. |
+| `fdr_threshold` | `0.05` | FDR below which a black ring marks the dot. |
+| `select_fdr_below` | `None` | Keep only pathways with ≥1 layer below this FDR. |
+| `max_rows` | `40` | Maximum pathways to show (best min-FDR first). |
+| `direction_col` | `None` | Signed column for dot colour (elevated/depressed). |
+| `direction_labels` | `None` | `(depressed_label, elevated_label)` for legend. |
+| `elevated_color` | `"#d62728"` | Colour for positive direction. |
+| `depressed_color` | `"#1f77b4"` | Colour for negative direction. |
+| `nodir_color` | `"0.7"` | Colour when no direction column. |
+| `size_range` | `(12, 400)` | Marker size range (points²). |
+| `alpha_range` | `(0.12, 1.0)` | Opacity range mapped to −log₁₀(FDR). |
+| `neglog_fdr_cap` | `3.0` | Cap for −log₁₀(FDR) (opacity saturates at 10⁻³). |
+| `cell_in` | `0.30` | Physical size (inches) of one grid cell. |
+| `layer_to_distance` | `None` | Optional µm axis from `build_layer_distance_map()`. |
+| `order_by_peak` | `True` | Order rows by cluster-mass peak layer. |
+| `savepath` | `None` | Save figure (PNG + SVG) to this path. |
+
+### AnnData shortcuts
+
+For AnnData workflows, use the convenience functions that handle layer extraction:
+
+```python
+# Profile directly from AnnData (requires hplot.pp.border_layers first)
+profiles = hplot.pathway_layer_profile_adata(
+    adata, signatures, sample_key="sample_id", layer_key="hplot_layer",
+)
+
+# Or from a saved H5AD file (lazy loading)
+profiles = hplot.pathway_layer_profile_h5ad("adata.h5ad", signatures, ...)
+```
+
+---
+
 ## Input data format
 
 | Column | Required | Description |
@@ -844,17 +963,26 @@ hplot/
   core.py      — HPlot class (fit / plot / plot_delta / gam_delta / savefig)
   plotting.py  — plot_hplot(), plot_hplot_gam(), plot_delta_hplot_gam();
                  H-Loci Summary panels (plot_hloci_summary / plot_hloci_bands /
-                 plot_hloci_bands_bidirectional) + border distance-axis helpers
-                 (build_layer_distance_map / add_border_distance_axis)
+                 plot_hloci_bands_bidirectional / plot_hpathway_summary);
+                 border distance-axis helpers (build_layer_distance_map /
+                 add_border_distance_axis)
   stats.py     — compute_layer_stats(), compute_layer_pvalues(),
-                 gam_group_curves(), gam_delta_curve(), gam_pooled_effect()
+                 gam_group_curves(), gam_delta_curve(), gam_pooled_effect(),
+                 cluster_mass_screen(), gradient_cluster_mass_screen(),
+                 directional_cluster_bands(), hpathway_summary_grid(),
+                 deviation_tensor(), benjamini_hochberg()
+  catalogs.py  — load_catalog(), read_gmt(), write_gmt(),
+                 select_signatures_on_panel() — signature/pathway catalogs
+                 (MSigDB, GO BP, GO goatools, custom GMT)
   runners.py   — run_hplot_batch() batch helper
   cli.py       — argparse CLI (hplot plot / test / gam / screen / loci)
   pp.py        — AnnData preprocessing: border_layers()
-  tl.py        — AnnData tool: hplot() fit -> adata.uns["hplot"]
+  tl.py        — AnnData tool: hplot(), ucell_scores(), pathway_layer_profile(),
+                 pathway_layer_profile_adata(), pathway_layer_profile_h5ad()
   pl.py        — AnnData plotting: hplot(), hplot_from_csv()
   io.py        — read_hplot_csv() CSV bridge
-  _geometry.py — pure numpy/scipy border-layer geometry (Delaunay, k-hop, BFS)
+  _geometry.py — pure numpy/scipy border-layer geometry (Delaunay, k-hop, BFS);
+                 border_layers_from_coords() for non-AnnData workflows
   _anndata.py  — lazy anndata guard + adata -> tidy-DataFrame extraction
   _serial.py   — h5ad-safe (de)serialisation of a fitted HPlot
 run_hplot.py   — legacy convenience script
