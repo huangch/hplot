@@ -1864,7 +1864,7 @@ def plot_hpathway_summary(
     size_range=(12.0, 400.0),
     side_colorbar=True,
     cell_in=0.30,
-    alpha_range=(0.12, 1.0),
+    alpha_range=(0.25, 1.0),
     neglog_fdr_cap=3.0,
     order_by_peak=True,
     direction_col=None,

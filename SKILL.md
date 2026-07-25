@@ -1,14 +1,15 @@
 ---
 name: hplot
-description: Install and operate hplot for spatial heterogeneity visualization of cell-type proportions across tissue distance layers
+description: Install and operate hplot for spatial heterogeneity visualization — H-Plots, H-Loci Summaries, and H-Pathway Summaries for cell-type proportions, gene expression, and pathway activity across tissue distance layers
 ---
 
 # hplot — Agentic AI Skill File
 
 > **Purpose**: Enable an agentic AI (Claude, OpenClaw, Hermes, or any
 > tool-using LLM agent) to autonomously install and operate hplot for
-> generating H-Plot spatial heterogeneity visualizations from cell-proportion
-> data across tissue distance layers.
+> generating spatial heterogeneity visualizations — H-Plots for single targets,
+> H-Loci Summaries for multi-feature screens, and H-Pathway Summaries for
+> pathway/signature-level profiling across tissue distance layers.
 
 ---
 
@@ -23,8 +24,16 @@ confidence intervals capture across-case variability.
 
 - **Repository**: Part of the WSInsight project ecosystem
 - **License**: Apache 2.0
-- **Python**: ≥ 3.7
-- **Entry points**: `python run_hplot.py` (batch CLI) or `from hplot.core import HPlot` (Python API)
+- **Python**: ≥ 3.8
+- **Entry points**: `python run_hplot.py` (batch CLI), `python -m hplot.cli` (full CLI), or `from hplot import HPlot` (Python API)
+
+### Key capabilities
+
+| Visualization | Purpose | Function |
+|--------------|---------|----------|
+| **H-Plot** | Single-target curve across layers | `HPlot.fit()` / `plot_hplot()` |
+| **H-Loci Summary** | Multi-feature screen overview | `plot_hloci_bands()` / `plot_hloci_summary()` |
+| **H-Pathway Summary** | Pathway/signature dotplot | `plot_hpathway_summary()` |
 
 ---
 
@@ -38,6 +47,7 @@ confidence intervals capture across-case variability.
 | pandas     | ≥ 1.0    | Data handling               |
 | scipy      | ≥ 1.6    | Confidence interval stats   |
 | numpy      | ≥ 1.18   | Numerical computation       |
+| pygam      | ≥ 0.8    | GAM smoothing (Stage 2)     |
 
 Optional extras (only for the AnnData / scanpy / squidpy interface, § 5.x):
 
@@ -56,7 +66,7 @@ pip install -e .
 ### 2.3 Direct from Source
 
 ```bash
-pip install matplotlib pandas scipy numpy
+pip install matplotlib pandas scipy numpy pygam
 # then use the package directly from the repository root
 ```
 
@@ -181,15 +191,7 @@ python -m hplot.cli loci -i long.csv --screen --kind bands \
 | Command | Key arguments | Purpose |
 | ------- | ------------- | ------- |
 | `screen` | `--sample --layer --unit --value`, `--grid LO HI`, `--baseline window\|far_stroma\|far_tumor\|"a,b"`, `--band-mode dominant\|bidirectional`, `--permutations`, `-o ranking.csv` | Screen every feature → banded ranking table. |
-| `loci` | `--kind bands\|summary\|bidirectional`, `--sort`, `--top-n`, `--fdr-col/--fdr-max`, column-name flags, `--screen`, `-o fig.svg` | Render an H-Loci Summary from a ranking CSV. `bands` (default) = the canonical view: horizontal band bars filled by direction (`up_color`/`down_color`) with a vertical tick at the cluster-mass peak. `summary` = legacy strip+triangle view. |
-
-The `screen` ranking CSV holds one row per banded feature (`direction`,
-`band_start_layer`, `band_end_layer`, `peak_layer`, `cluster_mass`, `fdr`, and
-`*_um` distance columns when `--distance` is given), which `loci` maps onto the
-plotters. When those `*_um` columns are present, `loci` reconstructs the
-layer→µm map from them and draws the same **dual x-axis as the H-Plot curves**
-(bottom = physical distance in µm, top = border layer L, boundary at 0) —
-automatically, whether you pass a precomputed ranking CSV or chain `--screen`.
+| `loci` | `--kind bands\|summary\|bidirectional`, `--sort`, `--top-n`, `--fdr-col/--fdr-max`, column-name flags, `--screen`, `-o fig.svg` | Render an H-Loci Summary from a ranking CSV. |
 
 ---
 
@@ -293,10 +295,7 @@ run_hplot_batch(
 )
 ```
 
-This writes one file per unique value in the `group` column to the `output`
-directory.
-
-### 5.x AnnData interface (scanpy / squidpy)
+### 5.6 AnnData interface (scanpy / squidpy)
 
 When the input is an `AnnData` rather than a tidy CSV, use the scanpy-style
 `pp`/`tl`/`pl` API (requires `pip install "hplot[anndata]"`, or
@@ -317,34 +316,13 @@ hplot.tl.hplot(adata, target="CD8A", groupby="cell_subtype",
 hplot.pl.hplot(adata)
 ```
 
-Notes:
-- `pp.border_layers` reuses `adata.obsp["spatial_connectivities"]` if present
-  (e.g. from `sq.gr.spatial_neighbors`), else builds a Delaunay graph from
-  `adata.obsm["spatial"]`.
-- `value_kind="proportion"` profiles a cell-type fraction from an `.obs`
-  categorical `target`; `value_kind="expression"` profiles a gene from `.X`.
-- `exclude_base=True` (proportion modes) divides by non-base cells only
-  (`all − base`, using the `base_categories` from `pp.border_layers`); base
-  categories are dropped from the curve set. Use `min_base_excluded_count` to
-  `NaN`-out sparse layers. The CLI equivalents are `--exclude-base` /
-  `--min-base-excluded-count` on `hplot plot|test|gam`, which derive the target
-  from `target_count / (all_count − base_count)`.
-- Re-plot a saved CSV with no AnnData:
-  `hplot.pl.hplot_from_csv("hplot-outputs.csv")`.
-- These modules import `anndata` lazily, so `import hplot` still works without
-  the extra installed.
-
----
-
 ### 5.7 H-Loci Summary — visualizing a multi-feature screen
 
 The engine above profiles **one** target across layers. To summarize a
 **screen over many features** (genes, ligand→receptor pairs, or cell-type
 fractions), each feature is first reduced to a scored *cluster band* — the run
 of border layers where it departs from baseline — with a direction, a centre
-(peak layer), and a magnitude (cluster mass). Those are produced by
-`hplot.stats.gradient_cluster_mass_screen()` / `directional_cluster_bands()`
-and rendered by the **H-Loci Summary** family:
+(peak layer), and a magnitude (cluster mass).
 
 | Function | One row per feature shows | Use when |
 | -------- | ------------------------- | -------- |
@@ -368,18 +346,55 @@ layer2um = hplot.build_layer_distance_map(
 hplot.add_border_distance_axis(ax, layer2um)
 ```
 
-`up_color` / `down_color` are **direction-neutral** ("up" = above baseline,
-"down" = below), so the same panel serves intensity readouts (elevated /
-depressed expression or interaction score) and compositional ones (enriched /
-depleted cell fraction) — the caption supplies the domain wording. Pass
-`sort=None` to keep your row order, or `sort="outer_to_inner"` /
-`"inner_to_outer"` to order by band centre.
+### 5.8 H-Pathway Summary — pathway/signature-level profiling
 
-`build_layer_distance_map(layers, distances=None)` averages the physical
-distance (µm) per signed layer `L` (two flat arrays, or one iterable of
-per-slide `(layers, distances)` pairs). `add_border_distance_axis(ax,
-layer_to_distance)` re-labels the panel's bottom axis in µm and adds a twin top
-axis in layer `L`, preserving the x-limits so the band bars stay aligned.
+For **pathway/signature-level profiling**, hplot provides UCell scoring,
+signature catalogs, and the H-Pathway Summary dotplot.
+
+```python
+import hplot
+
+# 1) Load a signature catalog (MSigDB Hallmark, GO BP, or custom GMT)
+signatures = hplot.load_catalog("msigdb")  # or "go_bp", "go_goatools"
+
+# 2) Gate signatures to genes present on your assay panel
+panel_genes = adata.var_names.tolist()
+sig_filtered = hplot.select_signatures_on_panel(signatures, panel_genes, min_genes=5)
+
+# 3) Compute per-cell UCell scores for each signature
+scores = hplot.ucell_scores(adata.X, sig_filtered, max_rank=1500)
+
+# 4) Profile signatures across border layers
+profiles = hplot.pathway_layer_profile(
+    adata.X, layers=adata.obs["hplot_layer"].values,
+    signatures=sig_filtered, var_names=adata.var_names.tolist(),
+    sample=adata.obs["sample_id"].values,
+)
+
+# 5) Build the (pathway x layer) grid with FDR columns
+grid_df = hplot.hpathway_summary_grid(
+    profiles, path_names=list(sig_filtered.keys()),
+    grid=range(-6, 13),
+)
+
+# 6) Render the H-Pathway Summary dotplot
+ax = hplot.plot_hpathway_summary(
+    grid_df,
+    direction_col="dir_contrast",      # signed column for colour
+    fdr_col="fdr_contrast",            # FDR column for opacity + significance ring
+    select_fdr_below=0.1,              # only show significant pathways
+    max_rows=30,
+)
+```
+
+#### Signature catalogs
+
+| Source | Description | Usage |
+|--------|-------------|-------|
+| `"msigdb"` | MSigDB Hallmark (50 gene sets) | `hplot.load_catalog("msigdb")` |
+| `"go_bp"` | GO Biological Process | `hplot.load_catalog("go_bp")` |
+| `"go_goatools"` | GO with DAG propagation | `hplot.load_catalog("go_goatools")` |
+| Custom `.gmt` | Any GMT file | `hplot.read_gmt("path/to/file.gmt")` |
 
 ---
 
@@ -394,6 +409,7 @@ axis in layer `L`, preserving the x-limits so the band bars stay aligned.
 | `distance`      | `str \| None`      | `None`  | Column for mean physical distance per layer.             |
 | `unit`          | `str \| None`      | `None`  | Unit label for the x-axis (e.g., `"µm"`).               |
 | `ci`            | `float`            | `0.95`  | Confidence level. t-distribution for n ≤ 30, z for n > 30. |
+| `smoother`      | `str`              | `"mean"` | `"mean"` (per-layer average) or `"gam"` (penalised smooth). |
 | `color_map`     | `dict \| None`     | `None`  | Explicit `{label: color}` mapping. Overrides `palette`.  |
 | `palette`       | `sequence \| None` | `None`  | Color sequence. Defaults to `plt.cm.tab10.colors`.       |
 | `legend_order`  | `list \| None`     | `None`  | Order of legend entries.                                 |
@@ -410,23 +426,44 @@ axis in layer `L`, preserving the x-limits so the band bars stay aligned.
 | `ax`                 | `Axes \| None`  | `None`            | Existing matplotlib axis. Creates a new figure if `None`. |
 | `display_base_type`  | `str`           | `"tumor"`         | Reference tissue type (used in title, x-axis).      |
 | `display_target_type`| `str`           | `"immune cells"`  | Target quantity name, interpolated into the y-axis label. |
-| `value_kind`         | `str`           | `"proportion"`    | Y-axis label phrasing: `"proportion"` → *Proportion of {target}*; `"fraction"` → *Fraction of cells in {target}* (niche/CME); `"expression"` → *Mean expression of {target}* (gene); `"interaction"` → *Mean interaction score of {target}* (ligand-receptor CCI). Ignored when `ylabel` is set. |
+| `value_kind`         | `str`           | `"proportion"`    | Y-axis label phrasing: `"proportion"` / `"fraction"` / `"expression"` / `"interaction"`. |
 | `ylabel`             | `str \| None`   | `None`            | Explicit y-axis label; overrides `value_kind`.      |
 
 ---
 
-## 8. Agentic Workflow Examples
+## 8. `plot_hpathway_summary()` Parameters
 
-### 8.1 End-to-End: WSInsight → hplot
+| Parameter       | Type               | Default           | Description                                         |
+| --------------- | ------------------ | ----------------- | --------------------------------------------------- |
+| `grid_df`       | `pd.DataFrame`     | —                 | Tidy (pathway x layer) DataFrame with score and FDR columns. |
+| `score_col`     | `str`              | `"score"`         | Column for the row-relative score (dot size).       |
+| `fdr_col`       | `str`              | `"fdr_dev"`       | Column for FDR (dot opacity + significance ring).   |
+| `path_col`      | `str`              | `"pathway"`       | Column identifying each pathway/signature.          |
+| `layer_col`     | `str`              | `"layer"`         | Column for signed border layer.                     |
+| `fdr_threshold` | `float`            | `0.05`            | FDR below which a black ring marks the dot.         |
+| `select_fdr_below` | `float \| None` | `None`            | Keep only pathways with ≥1 layer below this FDR.   |
+| `max_rows`      | `int \| None`      | `40`              | Maximum pathways to show (best min-FDR first).      |
+| `direction_col` | `str \| None`      | `None`            | Signed column for dot colour (elevated/depressed).  |
+| `direction_labels` | `tuple \| None` | `None`            | `(depressed_label, elevated_label)` for legend.     |
+| `elevated_color`| `str`              | `"#d62728"`       | Colour for positive direction.                      |
+| `depressed_color`| `str`             | `"#1f77b4"`       | Colour for negative direction.                      |
+| `nodir_color`   | `str`              | `"0.7"`           | Colour when no direction column.                    |
+| `size_range`    | `tuple`            | `(12, 400)`       | Marker size range (points²).                        |
+| `alpha_range`   | `tuple`            | `(0.12, 1.0)`     | Opacity range mapped to −log₁₀(FDR).               |
+| `neglog_fdr_cap`| `float`            | `3.0`             | Cap for −log₁₀(FDR) (opacity saturates at 10⁻³).   |
+| `cell_in`       | `float`            | `0.30`            | Physical size (inches) of one grid cell.            |
+| `layer_to_distance` | `Mapping \| None` | `None`         | Optional µm axis from `build_layer_distance_map()`. |
+| `order_by_peak` | `bool`             | `True`            | Order rows by cluster-mass peak layer.              |
+| `savepath`      | `str \| None`      | `None`            | Save figure (PNG + SVG) to this path.               |
+
+---
+
+## 9. Agentic Workflow Examples
+
+### 9.1 End-to-End: WSInsight → hplot
 
 A typical agent-driven workflow pairs WSInsight inference with hplot
 visualization:
-
-1. Run WSInsight cell-level inference on a cohort of WSIs.
-2. Use WSInsight spatial analytics (`ncomp`) to compute per-layer cell-type
-   proportions relative to a tissue boundary.
-3. Export the layer-proportion CSV.
-4. Feed the CSV to hplot to produce publication-ready H-Plot figures.
 
 ```bash
 # Step 1-3: WSInsight inference and spatial analytics (produces layers.csv)
@@ -445,7 +482,7 @@ python run_hplot.py \
   --ci
 ```
 
-### 8.2 Agent Decision Guide
+### 9.2 Agent Decision Guide
 
 | Agent Goal                                          | Action                                                   |
 | --------------------------------------------------- | -------------------------------------------------------- |
@@ -456,12 +493,90 @@ python run_hplot.py \
 | Generate batch plots for a full cohort               | Use `run_hplot_batch()` or the CLI with `--group`        |
 | Customize colors to match publication style          | Use `color_map={"hot": "red", "cold": "blue"}`           |
 | Embed plot in a larger multi-panel figure            | Pass an existing `ax` to `plot()`                        |
-| Summarize a many-feature screen (genes / LR / fractions) | `plot_hloci_bands()` / `plot_hloci_summary()` on the screen output (§ 5.7) |
-| Add a physical-distance (µm) axis to an H-Loci panel | `add_border_distance_axis(ax, build_layer_distance_map(...))` |
+| Summarize a many-feature screen                      | `plot_hloci_bands()` / `plot_hloci_summary()`            |
+| Profile pathway activity across layers               | `plot_hpathway_summary()` with UCell scores              |
+| Add physical-distance (µm) axis to a panel           | `add_border_distance_axis(ax, build_layer_distance_map(...))` |
+| Load MSigDB or GO signatures                         | `hplot.load_catalog("msigdb")` / `"go_bp"`               |
 
 ---
 
-## 9. Troubleshooting
+## 10. Complete API Reference
+
+### Core classes
+
+| Class | Purpose |
+|-------|---------|
+| `HPlot` | Main engine: `fit()` / `plot()` / `plot_delta()` / `savefig()` |
+
+### Plotting functions
+
+| Function | Purpose |
+|----------|---------|
+| `plot_hplot()` | Single H-Plot with optional GAM overlay |
+| `plot_hplot_gam()` | H-Plot–GAM (per-group smooths) |
+| `plot_delta_hplot_gam()` | ΔH-Plot–GAM (difference curve) |
+| `plot_hloci_summary()` | H-Loci Summary (strip+triangle) |
+| `plot_hloci_bands()` | H-Loci Summary (horizontal bars) |
+| `plot_hloci_bands_bidirectional()` | H-Loci Summary (two bars per row) |
+| `plot_hloci_fdr_summary()` | H-Loci FDR Summary |
+| `plot_hpathway_summary()` | H-Pathway Summary dotplot |
+| `build_layer_distance_map()` | Layer → µm mapping |
+| `add_border_distance_axis()` | Add physical distance axis |
+
+### Statistics functions
+
+| Function | Purpose |
+|----------|---------|
+| `compute_layer_stats()` | Per-layer mean ± CI |
+| `compute_layer_pvalues()` | Mann-Whitney / t-test per layer |
+| `compute_layer_kruskal_pvalues()` | Kruskal-Wallis per layer |
+| `gam_group_curves()` | Per-group GAM smooths |
+| `gam_delta_curve()` | Difference curve between groups |
+| `gam_pooled_effect()` | Pooled GAM effect size ± p-value |
+| `cluster_mass_screen()` | Cluster-mass permutation screen |
+| `gradient_cluster_mass_screen()` | Multi-feature gradient screen |
+| `directional_cluster_bands()` | Extract directional cluster bands |
+| `deviation_tensor()` | Per-layer deviation tensor |
+| `hpathway_summary_grid()` | Build (pathway x layer) grid |
+| `benjamini_hochberg()` | FDR correction |
+| `binarize()` | Binarize continuous variable |
+
+### Signature/catalog functions
+
+| Function | Purpose |
+|----------|---------|
+| `load_catalog()` | Load MSigDB / GO catalog |
+| `read_gmt()` | Read GMT file |
+| `write_gmt()` | Write GMT file |
+| `select_signatures_on_panel()` | Filter signatures to panel genes |
+
+### UCell/pathway functions
+
+| Function | Purpose |
+|----------|---------|
+| `ucell_scores()` | Per-cell UCell signature scores |
+| `pathway_layer_profile()` | Per-layer pathway profile |
+| `pathway_layer_profile_adata()` | Profile from AnnData |
+| `pathway_layer_profile_h5ad()` | Profile from H5AD file |
+
+### Geometry functions
+
+| Function | Purpose |
+|----------|---------|
+| `border_layers_from_coords()` | Compute border layers from coordinates |
+
+### AnnData API
+
+| Module | Functions |
+|--------|-----------|
+| `hplot.pp` | `border_layers()` |
+| `hplot.tl` | `hplot()`, `ucell_scores()`, `pathway_layer_profile()` |
+| `hplot.pl` | `hplot()`, `hplot_from_csv()` |
+| `hplot.io` | `read_hplot_csv()` |
+
+---
+
+## 11. Troubleshooting
 
 | Symptom                              | Cause                                    | Fix                                              |
 | ------------------------------------ | ---------------------------------------- | ------------------------------------------------ |
@@ -470,3 +585,5 @@ python run_hplot.py \
 | Empty plot                           | All rows have NaN in target column       | Check CSV for missing values in target columns.  |
 | No dual x-axis                       | `distance` or `unit` not provided        | Pass both `distance=` and `unit=` to `fit()`.    |
 | Colors don't match expectation       | `color_map` missing a group label        | Ensure every group value has a key in `color_map`. |
+| `ImportError: ... pip install 'hplot[anndata]'` | AnnData extra not installed | `pip install "hplot[anndata]"` |
+| All `hplot_layer` are NaN            | No base cells matched                    | Check `cluster_key` values and `base_categories` spelling. |
