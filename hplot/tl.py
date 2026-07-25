@@ -280,6 +280,84 @@ def pathway_layer_profile(X, layers, signatures, *, var_names, sample=None,
     return prof
 
 
+def pathway_layer_profile_adata(
+    adata,
+    signatures,
+    *,
+    base_col,
+    spatial_key="spatial",
+    k=2,
+    n_min=10,
+    ratio=0.2,
+    max_edge=25.0,
+    sample=None,
+    extra=None,
+    max_rank=1500,
+    chunk=8000,
+    return_layers=False,
+):
+    """Border-layer H-Pathway profile straight from an AnnData.
+
+    One-call convenience that fuses the two H-Plot steps so callers don't have
+    to re-glue them every time:
+
+    1. geometry -- :func:`hplot.border_layers_from_coords` on
+       ``adata.obsm[spatial_key]`` and the boolean base mask
+       ``adata.obs[base_col]`` (Delaunay -> k-hop -> base region -> border ->
+       signed hop layer);
+    2. scoring -- :func:`pathway_layer_profile` (per-cell UCell scoring +
+       per-layer mean) on the cells that fall on a finite layer.
+
+    File I/O and caching are intentionally left to the caller (they are
+    application-specific); everything scientific is packaged here.
+
+    Parameters
+    ----------
+    adata : AnnData
+        Must carry ``obsm[spatial_key]`` (n_cells x 2 coordinates) and a
+        boolean-like ``obs[base_col]`` marking the base (e.g. tumour) cells.
+    signatures : dict[str, sequence[str]]
+        Signature name -> gene symbols (matched against ``adata.var_names``).
+    base_col : str
+        ``.obs`` column giving the base-region membership per cell.
+    spatial_key : str
+        ``.obsm`` key with the 2-D coordinates. Default ``"spatial"``.
+    k, n_min, ratio, max_edge : see :func:`hplot.border_layers_from_coords`.
+        ``max_edge`` is in the same units as the coordinates (multiply by MPP
+        if your coordinates are in pixels and you want a micron threshold).
+    sample : hashable | None
+        Attached as a ``"sample"`` column on every output row.
+    extra : dict | None
+        Extra scalar columns to attach to every output row (e.g. status).
+    max_rank, chunk : see :func:`pathway_layer_profile`.
+    return_layers : bool
+        If True, also return the per-cell signed layer array (length n_cells,
+        ``nan`` where unreachable) for downstream reuse.
+
+    Returns
+    -------
+    pandas.DataFrame  (or ``(DataFrame, ndarray)`` when ``return_layers=True``)
+        One row per layer, as in :func:`pathway_layer_profile`.
+    """
+    from ._geometry import border_layers_from_coords
+
+    coords = np.asarray(adata.obsm[spatial_key], dtype=np.float64)
+    is_base = np.asarray(adata.obs[base_col]).astype(bool)
+    _um, signed = border_layers_from_coords(
+        coords, is_base, A=None, k=k, n_min=n_min, ratio=ratio, max_edge=max_edge
+    )
+    keep = np.isfinite(signed)
+    layers = signed[keep].astype(int)
+    prof = pathway_layer_profile(
+        adata.X[keep], layers, signatures,
+        var_names=adata.var_names, sample=sample,
+        max_rank=max_rank, chunk=chunk, extra=extra,
+    )
+    if return_layers:
+        return prof, signed
+    return prof
+
+
 def _to_dense(block):
     """Densify a sparse row-block; pass dense arrays through unchanged."""
     todense = getattr(block, "todense", None)

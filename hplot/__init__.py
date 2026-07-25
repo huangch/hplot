@@ -42,7 +42,8 @@ from .stats import (
     benjamini_hochberg,
     hpathway_summary_grid,
 )
-from .tl import ucell_scores, pathway_layer_profile
+from .tl import ucell_scores, pathway_layer_profile, pathway_layer_profile_adata
+from ._geometry import border_layers_from_coords
 from .catalogs import (
     load_catalog,
     read_gmt,
@@ -82,6 +83,8 @@ __all__ = [
     "hpathway_summary_grid",
     "ucell_scores",
     "pathway_layer_profile",
+    "pathway_layer_profile_adata",
+    "border_layers_from_coords",
     "load_catalog",
     "read_gmt",
     "write_gmt",
