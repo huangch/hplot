@@ -32,8 +32,8 @@ confidence intervals capture across-case variability.
 | Visualization | Purpose | Function |
 |--------------|---------|----------|
 | **H-Plot** | Single-target curve across layers | `HPlot.fit()` / `plot_hplot()` |
-| **H-Loci Summary** | Multi-feature screen overview | `plot_hloci_bands()` / `plot_hloci_summary()` |
-| **H-Pathway Summary** | Pathway/signature dotplot | `plot_hpathway_summary()` |
+| **H-Loci Summary** | Multi-feature screen overview | `plot_hloci_bands()` / `plot_hloci_strip()` |
+| **H-Pathway Summary** | Pathway/signature dotplot | `plot_hpathway_dotplot()` |
 
 ---
 
@@ -326,16 +326,19 @@ of border layers where it departs from baseline — with a direction, a centre
 
 | Function | One row per feature shows | Use when |
 | -------- | ------------------------- | -------- |
-| `plot_hloci_summary()` | a strip at the band position; thickness = cluster mass, ▲/▼ = direction | overview of hundreds of features |
-| `plot_hloci_bands()` | a horizontal bar over `[band_lo, band_hi]`, filled by direction, peak tick | where + how wide each band sits |
-| `plot_hloci_bands_bidirectional()` | two bars (elevated + depressed) per row | features banded on both sides |
+| `plot_hloci_strip()` | a strip at the band position; thickness = cluster mass, ▲/▼ = direction | overview of hundreds of features |
+| `plot_hloci_bands()` | a horizontal bar over `[band_start_layer, band_end_layer]`, filled by direction, peak tick | where + how wide each band sits |
+| `plot_hloci_bands_bidir()` | two bars (elevated + depressed) per row | features banded on both sides |
+| `plot_hloci_fdr()` | band spans + `-log10(FDR)` in a two-panel figure | ranking a whole screen by significance |
+| `plot_hloci_dotplot()` | a (feature × layer) dotplot; size = score, colour = direction | per-layer detail for a feature subset |
 
 ```python
 import hplot
 
+# `screen_df` is gradient_cluster_mass_screen(...)["long"]
 rank = screen_df[screen_df["peak_layer"].notna()].sort_values("peak_layer")
 ax = hplot.plot_hloci_bands(
-    rank["band_lo"], rank["band_hi"], rank["direction"],
+    rank["band_start_layer"], rank["band_end_layer"], rank["direction"],
     peak=rank["peak_layer"], labels=rank["gene"],
     sort=None,                        # keep caller order
 )
@@ -354,31 +357,33 @@ signature catalogs, and the H-Pathway Summary dotplot.
 ```python
 import hplot
 
-# 1) Load a signature catalog (MSigDB Hallmark, GO BP, or custom GMT)
-signatures = hplot.load_catalog("msigdb")  # or "go_bp", "go_goatools"
+# 1) Load a signature catalog. `cache_dir` is required (catalogs are cached as .gmt).
+signatures = hplot.load_catalog("msigdb", cache_dir="pathway_catalogs")
 
-# 2) Gate signatures to genes present on your assay panel
-panel_genes = adata.var_names.tolist()
-sig_filtered = hplot.select_signatures_on_panel(signatures, panel_genes, min_genes=5)
+# 2) Gate signatures to genes present on your assay panel.
+#    Returns (present, coverage); coverage is {name: (n_present, n_total, fraction)}.
+panel_genes = set(adata.var_names)
+sig_filtered, coverage = hplot.select_signatures_on_panel(
+    signatures, panel_genes, mode="discovery", min_panel_genes=5)
 
-# 3) Compute per-cell UCell scores for each signature
-scores = hplot.ucell_scores(adata.X, sig_filtered, max_rank=1500)
-
-# 4) Profile signatures across border layers
+# 3) Profile signatures across border layers (UCell scoring happens inside).
+#    `sample` is a scalar label attached to every row of this slide's profile.
 profiles = hplot.pathway_layer_profile(
     adata.X, layers=adata.obs["hplot_layer"].values,
-    signatures=sig_filtered, var_names=adata.var_names.tolist(),
-    sample=adata.obs["sample_id"].values,
+    signatures=sig_filtered, var_names=list(adata.var_names),
+    sample="slide_01", extra={"hpv": "HPV+"},
 )
 
-# 5) Build the (pathway x layer) grid with FDR columns
+# 4) Build the (pathway x layer) grid with FDR columns.
+#    Each contrast is {name: (group_col, groups)} and yields p_/fdr_/dir_<name>.
 grid_df = hplot.hpathway_summary_grid(
-    profiles, path_names=list(sig_filtered.keys()),
-    grid=range(-6, 13),
+    profiles, path_names=list(sig_filtered), grid=range(-6, 13),
+    deviation="far",
+    contrasts={"contrast": ("hpv", ("HPV+", "Rest"))},
 )
 
-# 6) Render the H-Pathway Summary dotplot
-ax = hplot.plot_hpathway_summary(
+# 5) Render the H-Pathway Summary dotplot
+out = hplot.plot_hpathway_dotplot(
     grid_df,
     direction_col="dir_contrast",      # signed column for colour
     fdr_col="fdr_contrast",            # FDR column for opacity + significance ring
@@ -387,13 +392,17 @@ ax = hplot.plot_hpathway_summary(
 )
 ```
 
+`ucell_scores()` is available when you want per-cell scores directly, but it
+takes **integer column indices**, not gene symbols — `pathway_layer_profile()`
+resolves symbols for you.
+
 #### Signature catalogs
 
 | Source | Description | Usage |
 |--------|-------------|-------|
-| `"msigdb"` | MSigDB Hallmark (50 gene sets) | `hplot.load_catalog("msigdb")` |
-| `"go_bp"` | GO Biological Process | `hplot.load_catalog("go_bp")` |
-| `"go_goatools"` | GO with DAG propagation | `hplot.load_catalog("go_goatools")` |
+| `"msigdb"` | MSigDB Hallmark (50 gene sets) | `hplot.load_catalog("msigdb", cache_dir=...)` |
+| `"go_bp"` | GO Biological Process | `hplot.load_catalog("go_bp", cache_dir=...)` |
+| `"go_goatools"` | GO with DAG propagation | `hplot.load_catalog("go_goatools", cache_dir=..., obo_path=..., gene2go_path=...)` |
 | Custom `.gmt` | Any GMT file | `hplot.read_gmt("path/to/file.gmt")` |
 
 ---
@@ -431,7 +440,7 @@ ax = hplot.plot_hpathway_summary(
 
 ---
 
-## 8. `plot_hpathway_summary()` Parameters
+## 8. `plot_hpathway_dotplot()` Parameters
 
 | Parameter       | Type               | Default           | Description                                         |
 | --------------- | ------------------ | ----------------- | --------------------------------------------------- |
@@ -449,7 +458,7 @@ ax = hplot.plot_hpathway_summary(
 | `depressed_color`| `str`             | `"#1f77b4"`       | Colour for negative direction.                      |
 | `nodir_color`   | `str`              | `"0.7"`           | Colour when no direction column.                    |
 | `size_range`    | `tuple`            | `(12, 400)`       | Marker size range (points²).                        |
-| `alpha_range`   | `tuple`            | `(0.12, 1.0)`     | Opacity range mapped to −log₁₀(FDR).               |
+| `alpha_range`   | `tuple`            | `(0.25, 1.0)`     | Opacity range mapped to −log₁₀(FDR).               |
 | `neglog_fdr_cap`| `float`            | `3.0`             | Cap for −log₁₀(FDR) (opacity saturates at 10⁻³).   |
 | `cell_in`       | `float`            | `0.30`            | Physical size (inches) of one grid cell.            |
 | `layer_to_distance` | `Mapping \| None` | `None`         | Optional µm axis from `build_layer_distance_map()`. |
@@ -493,10 +502,10 @@ python run_hplot.py \
 | Generate batch plots for a full cohort               | Use `run_hplot_batch()` or the CLI with `--group`        |
 | Customize colors to match publication style          | Use `color_map={"hot": "red", "cold": "blue"}`           |
 | Embed plot in a larger multi-panel figure            | Pass an existing `ax` to `plot()`                        |
-| Summarize a many-feature screen                      | `plot_hloci_bands()` / `plot_hloci_summary()`            |
-| Profile pathway activity across layers               | `plot_hpathway_summary()` with UCell scores              |
+| Summarize a many-feature screen                      | `plot_hloci_bands()` / `plot_hloci_strip()`              |
+| Profile pathway activity across layers               | `plot_hpathway_dotplot()` with UCell scores              |
 | Add physical-distance (µm) axis to a panel           | `add_border_distance_axis(ax, build_layer_distance_map(...))` |
-| Load MSigDB or GO signatures                         | `hplot.load_catalog("msigdb")` / `"go_bp"`               |
+| Load MSigDB or GO signatures                         | `hplot.load_catalog("msigdb", cache_dir=...)`            |
 
 ---
 
@@ -514,12 +523,13 @@ python run_hplot.py \
 |----------|---------|
 | `plot_hplot()` | Single H-Plot with optional GAM overlay |
 | `plot_hplot_gam()` | H-Plot–GAM (per-group smooths) |
-| `plot_delta_hplot_gam()` | ΔH-Plot–GAM (difference curve) |
-| `plot_hloci_summary()` | H-Loci Summary (strip+triangle) |
+| `plot_hplot_gam_delta()` | ΔH-Plot–GAM (difference curve) |
+| `plot_hloci_strip()` | H-Loci Summary (strip+triangle) |
 | `plot_hloci_bands()` | H-Loci Summary (horizontal bars) |
-| `plot_hloci_bands_bidirectional()` | H-Loci Summary (two bars per row) |
-| `plot_hloci_fdr_summary()` | H-Loci FDR Summary |
-| `plot_hpathway_summary()` | H-Pathway Summary dotplot |
+| `plot_hloci_bands_bidir()` | H-Loci Summary (two bars per row) |
+| `plot_hloci_fdr()` | H-Loci band + FDR two-panel summary |
+| `plot_hloci_dotplot()` | H-Loci (feature × layer) dotplot |
+| `plot_hpathway_dotplot()` | H-Pathway Summary dotplot |
 | `build_layer_distance_map()` | Layer → µm mapping |
 | `add_border_distance_axis()` | Add physical distance axis |
 

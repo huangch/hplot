@@ -13,7 +13,7 @@ import matplotlib
 matplotlib.use("Agg")
 matplotlib.rcParams["svg.fonttype"] = "none"  # keep <text> in the SVG
 
-from hplot import plot_hpathway_summary
+from hplot import plot_hpathway_dotplot
 from hplot import pl as hpl
 
 
@@ -38,7 +38,7 @@ class TestHPathwaySummary(unittest.TestCase):
         self.grid = _synthetic_grid()
 
     def test_returns_axes_dict(self):
-        out = plot_hpathway_summary(self.grid, fdr_col="fdr_dev",
+        out = plot_hpathway_dotplot(self.grid, fdr_col="fdr_dev",
                                     select_fdr_below=None, max_rows=40)
         self.assertIsInstance(out, dict)
         for key in ("figure", "ax", "colorbar_axis", "selected"):
@@ -47,19 +47,19 @@ class TestHPathwaySummary(unittest.TestCase):
 
     def test_empty_selection_returns_none(self):
         # An impossible FDR gate keeps no pathway.
-        out = plot_hpathway_summary(self.grid, fdr_col="fdr_dev",
+        out = plot_hpathway_dotplot(self.grid, fdr_col="fdr_dev",
                                     select_fdr_below=0.0, max_rows=40)
         self.assertIsNone(out)
 
     def test_max_rows_caps_pathways(self):
-        out = plot_hpathway_summary(self.grid, fdr_col="fdr_dev",
+        out = plot_hpathway_dotplot(self.grid, fdr_col="fdr_dev",
                                     select_fdr_below=None, max_rows=3)
         self.assertLessEqual(len(out["selected"]), 3)
 
     def test_savepath_writes_png_and_vector_svg(self):
         with tempfile.TemporaryDirectory() as tmp:
             png = os.path.join(tmp, "hpathway.png")
-            out = plot_hpathway_summary(self.grid, fdr_col="fdr_contrast",
+            out = plot_hpathway_dotplot(self.grid, fdr_col="fdr_contrast",
                                         select_fdr_below=None, max_rows=40,
                                         savepath=png)
             svg = png.replace(".png", ".svg")

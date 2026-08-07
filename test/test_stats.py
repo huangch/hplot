@@ -347,8 +347,8 @@ class TestBidirectionalPlot(unittest.TestCase):
     def test_plot_smoke(self):
         import matplotlib
         matplotlib.use("Agg")
-        from hplot.plotting import plot_hloci_bands_bidirectional
-        ax = plot_hloci_bands_bidirectional(
+        from hplot.plotting import plot_hloci_bands_bidir
+        ax = plot_hloci_bands_bidir(
             labels=["A", "B", "C"],
             elev_lo=[3, np.nan, 1], elev_hi=[6, np.nan, 4],
             depr_lo=[-4, -2, np.nan], depr_hi=[-1, 0, np.nan],
@@ -362,17 +362,18 @@ class TestHlociFdrSummary(unittest.TestCase):
     def test_plot_smoke_and_stop_label(self):
         import matplotlib
         matplotlib.use("Agg")
-        from hplot.plotting import plot_hloci_fdr_summary
+        from hplot.plotting import plot_hloci_fdr
 
+        # Column names match what gradient_cluster_mass_screen()['long'] emits.
         rank = pd.DataFrame({
             "feature": ["A", "B", "C", "excluded"],
-            "band_lo": [-4, -1, 2, 1],
-            "band_hi": [-2, 1, 5, 2],
+            "band_start_layer": [-4, -1, 2, 1],
+            "band_end_layer": [-2, 1, 5, 2],
             "peak_layer": [-3, 0, 3, float("nan")],
             "cluster_mass": [4.0, 7.0, 2.0, 0.0],
-            "fdr_global": [0.02, 0.001, 0.04, 1.0],
+            "fdr": [0.02, 0.001, 0.04, 1.0],
         })
-        result = plot_hloci_fdr_summary(
+        result = plot_hloci_fdr(
             rank, "feature", stop_label="A", layer_limits=(-5, 5),
             layer_to_distance={-4: -80, -1: -20, 0: 0, 2: 40, 5: 100},
         )
