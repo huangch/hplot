@@ -38,6 +38,7 @@ from .stats import (
     deviation_tensor,
     benjamini_hochberg,
     hpathway_summary_grid,
+    pathway_competitive_test,
 )
 from .tl import ucell_scores, pathway_layer_profile, pathway_layer_profile_adata, pathway_layer_profile_h5ad
 from ._geometry import border_layers_from_coords
@@ -75,6 +76,7 @@ __all__ = [
     "deviation_tensor",
     "benjamini_hochberg",
     "hpathway_summary_grid",
+    "pathway_competitive_test",
     "ucell_scores",
     "pathway_layer_profile",
     "pathway_layer_profile_adata",

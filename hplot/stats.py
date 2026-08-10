@@ -1231,6 +1231,33 @@ def _dominance_score(m_elev, m_depr):
     return (m1 - m2) / m1
 
 
+def _sign_flip_signs(n_slides, slide_groups, n_perm, rng):
+    """Sign-flip design matrix whose exchangeable unit is a *group* of slides.
+
+    Slides sharing a group (e.g. two runs from one patient) always flip together,
+    so the null keeps their within-group correlation instead of breaking it. A
+    per-slide flip would make the null less variable than the data whenever
+    slides are clustered, which is anti-conservative.
+
+    Returns ``(signs, n_groups, exact)`` where ``signs`` is ``(n_draw, n_slides)``.
+    The whole sign space is enumerated when it is no larger than ``n_perm``, which
+    turns the Monte-Carlo test into an exact one.
+    """
+    if slide_groups is None:
+        gidx = np.arange(n_slides)
+    else:
+        slide_groups = np.asarray(slide_groups)
+        if slide_groups.shape[0] != n_slides:
+            raise ValueError("slide_groups must have one entry per slide.")
+        _, gidx = np.unique(slide_groups, return_inverse=True)
+    n_groups = int(gidx.max()) + 1
+    if 2 ** n_groups <= n_perm:
+        bits = (np.arange(2 ** n_groups)[:, None] >> np.arange(n_groups)) & 1
+        return (bits * 2.0 - 1.0)[:, gidx], n_groups, True
+    signs = rng.choice((-1.0, 1.0), size=(n_perm, n_groups))
+    return signs[:, gidx], n_groups, False
+
+
 def gradient_cluster_mass_screen(
     D,
     grid,
@@ -1244,6 +1271,7 @@ def gradient_cluster_mass_screen(
     seed=0,
     layer_um=None,
     progress=False,
+    slide_groups=None,
 ):
     """Single-group directional cluster-mass border-gradient screen.
 
@@ -1259,9 +1287,28 @@ def gradient_cluster_mass_screen(
       permutation null and a BH-FDR taken across all unit x direction
       hypotheses.
 
-    The permutation null preserves the analysis's original scheme: within each
-    slide the layers of the deviation tensor are shuffled, breaking the
-    layer<->value association while keeping the per-slide marginal.
+    The permutation null is a slide-level **sign flip**: each slide's entire
+    deviation block is multiplied by a random +-1, so every slide keeps its own
+    layer autocorrelation, amplitude and NaN coverage while the cross-slide
+    agreement that drives :func:`_signed_layer_z` is destroyed. Shuffling layers
+    instead whitens the layer axis, which makes long contiguous supra-threshold
+    runs much rarer under the null than in real (spatially smooth) profiles and
+    leaves the test anti-conservative; it also relocates NaNs, so the
+    ``min_per_group`` coverage gate would apply to different layers in the null
+    than in the data. Signs are drawn once per slide and shared across units, so
+    unit-unit covariance is preserved for the pooled-null FDR. The scheme is
+    exact under symmetry of the slide-level deviation profile about zero, which
+    :func:`deviation_tensor` enforces by centring each slide on its own baseline
+    window.
+
+    ``slide_groups`` sets the exchangeable unit. Leave it ``None`` when every
+    slide is an independent biological replicate; pass a per-slide label (a
+    patient identifier, say) whenever several slides come from the same subject,
+    so that those slides flip together and the null retains their correlation.
+    Flipping clustered slides independently makes the null less variable than the
+    data and the test anti-conservative. The null space holds ``2 ** n_groups``
+    states and is enumerated exhaustively -- giving an exact test -- whenever
+    that is at most ``n_perm``.
 
     Parameters
     ----------
@@ -1283,13 +1330,15 @@ def gradient_cluster_mass_screen(
     min_per_group : int
         Minimum contributing slides per layer. Default 10.
     n_perm : int
-        Number of layer-shuffle permutations. Default 1000.
+        Number of sign-flip permutations. Default 1000.
     seed : int
         RNG seed. Default 0.
     layer_um : dict | None
         Optional ``{layer: micron}`` map to populate the ``*_um`` columns.
     progress : bool
         Show a tqdm bar over permutations if available. Default False.
+    slide_groups : array-like | None
+        Per-slide exchangeable-unit label. Default None (each slide its own).
 
     Returns
     -------
@@ -1324,8 +1373,8 @@ def gradient_cluster_mass_screen(
             return np.nan
         return float(layer_um.get(int(round(layer)), np.nan))
 
-    def _perm_iter():
-        it = range(n_perm)
+    def _perm_iter(n):
+        it = range(n)
         if progress:
             try:
                 from tqdm.auto import tqdm as _tqdm
@@ -1335,6 +1384,9 @@ def gradient_cluster_mass_screen(
         return it
 
     rng = np.random.default_rng(seed)
+    signs, n_groups, exact_null = _sign_flip_signs(n_slides, slide_groups, n_perm, rng)
+    n_draw = signs.shape[0]
+    meta = dict(n_groups=n_groups, n_draw=n_draw, exact_null=exact_null)
 
     if band_mode == "dominant":
         # ---- observed: combined winner-take-all band per unit ---------------
@@ -1344,21 +1396,20 @@ def gradient_cluster_mass_screen(
         for u in range(n_units):
             m, bs, be = _best_band_combined(h_obs[:, u], h_obs[:, u] > thr, min_w)
             obs_mass[u], bs_o[u], be_o[u] = m, bs, be
-        # ---- pooled-permutation null (historical estimator) -----------------
-        null = np.empty((n_perm, n_units), dtype=np.float32)
-        for b in _perm_iter():
-            Dp = np.empty_like(D)
-            for si in range(n_slides):
-                Dp[si] = D[si][rng.permutation(n_layers)]
+        # ---- pooled sign-flip permutation null ------------------------------
+        null = np.empty((n_draw, n_units), dtype=np.float32)
+        for b in _perm_iter(n_draw):
+            Dp = D * signs[b][:, None, None]
             hp = np.nan_to_num(_signed_layer_z(Dp, min_per_group) ** 2, nan=0.0)
             for u in range(n_units):
                 null[b, u], _, _ = _best_band_combined(hp[:, u], hp[:, u] > thr, min_w)
-        perm_p = np.maximum((null >= obs_mass[None, :]).mean(0), 1.0 / n_perm)
+        perm_p = (1.0 + (null >= obs_mass[None, :]).sum(0)) / (n_draw + 1.0)
+        perm_p = np.where(obs_mass > 0, perm_p, 1.0)
         order = np.argsort(-obs_mass)
         obs_s = obs_mass[order]
         flat = np.sort(null.ravel())
         ge = flat.size - np.searchsorted(flat, obs_s, side="left")
-        EV = ge / n_perm
+        EV = ge / n_draw
         R = np.arange(1, n_units + 1)
         fdr_s = np.minimum(EV / R, 1.0)
         fdr_s = np.minimum.accumulate(fdr_s[::-1])[::-1]
@@ -1397,7 +1448,8 @@ def gradient_cluster_mass_screen(
                          "dominant_fdr": float(fdr[u]), "dominance_score": 1.0})
         long_df = pd.DataFrame(rows)
         wide_df = pd.DataFrame(wide)
-        return dict(thr=thr, z=z_obs, long=long_df, wide=wide_df, band_mode=band_mode)
+        return dict(thr=thr, z=z_obs, long=long_df, wide=wide_df,
+                    band_mode=band_mode, **meta)
 
     # ---- bidirectional --------------------------------------------------------
     obs_pos = np.zeros(n_units)
@@ -1411,12 +1463,10 @@ def gradient_cluster_mass_screen(
         obs_pos[u] = de["mass"] if de else 0.0
         obs_neg[u] = dd["mass"] if dd else 0.0
 
-    null_pos = np.zeros((n_perm, n_units), dtype=np.float32)
-    null_neg = np.zeros((n_perm, n_units), dtype=np.float32)
-    for b in _perm_iter():
-        Dp = np.empty_like(D)
-        for si in range(n_slides):
-            Dp[si] = D[si][rng.permutation(n_layers)]
+    null_pos = np.zeros((n_draw, n_units), dtype=np.float32)
+    null_neg = np.zeros((n_draw, n_units), dtype=np.float32)
+    for b in _perm_iter(n_draw):
+        Dp = D * signs[b][:, None, None]
         zp = _signed_layer_z(Dp, min_per_group)
         hp = np.nan_to_num(zp ** 2, nan=0.0)
         supra = hp > thr
@@ -1427,8 +1477,8 @@ def gradient_cluster_mass_screen(
             null_neg[b, u], _, _ = _best_band_masked(hp[:, u], neg[:, u], min_w)
 
     # plus-one directional permutation p-values (never zero)
-    p_pos = (1.0 + (null_pos >= obs_pos[None, :]).sum(0)) / (n_perm + 1.0)
-    p_neg = (1.0 + (null_neg >= obs_neg[None, :]).sum(0)) / (n_perm + 1.0)
+    p_pos = (1.0 + (null_pos >= obs_pos[None, :]).sum(0)) / (n_draw + 1.0)
+    p_neg = (1.0 + (null_neg >= obs_neg[None, :]).sum(0)) / (n_draw + 1.0)
     p_pos = np.where(obs_pos > 0, p_pos, 1.0)
     p_neg = np.where(obs_neg > 0, p_neg, 1.0)
 
@@ -1493,7 +1543,8 @@ def gradient_cluster_mass_screen(
 
     long_df = pd.DataFrame(rows)
     wide_df = pd.DataFrame(wide)
-    return dict(thr=thr, z=z_obs, long=long_df, wide=wide_df, band_mode=band_mode)
+    return dict(thr=thr, z=z_obs, long=long_df, wide=wide_df,
+                band_mode=band_mode, **meta)
 
 
 # ---------------------------------------------------------------------------
@@ -1586,8 +1637,20 @@ def hpathway_summary_grid(profiles, *, path_names, grid,
                           deviation_alternative="two-sided",
                           contrasts=None, long_df=None,
                           value_col="score", pathway_col="pathway",
-                          verbose=True):
+                          coverage=None, verbose=True):
     """Build the tidy (pathway x layer) grid that feeds ``plot_hpathway_dotplot``.
+
+    .. warning::
+
+       ``fdr_dev`` is a **self-contained** test, not an enrichment test. It asks
+       whether a set's score departs from *its own* baseline along the ruler --
+       never whether it departs more than a size-matched random draw from the
+       same measured universe would. On a targeted panel the second question is
+       the one that carries information, because such panels are curated so that
+       most of their genes track the contrast of interest; a self-contained test
+       then calls a large fraction of sets significant regardless of what the
+       sets contain, and the pathway *names* become uninterpretable. Pair this
+       function with :func:`pathway_competitive_test` before naming any row.
 
     Given per-slide, per-layer pathway/signature profiles this assembles the
     long grid the dotplot consumes, so a user does not re-implement the pooled
@@ -1630,6 +1693,10 @@ def hpathway_summary_grid(profiles, *, path_names, grid,
         melted from ``profiles`` (id columns = every non-pathway column).
     value_col, pathway_col : str
         Value / pathway column names in ``long_df``.
+    coverage : dict[str, tuple[int, int]] | None
+        Optional ``{pathway: (n_measured, n_total)}``. When given, a low median
+        coverage raises a warning: a set represented by a handful of probes is
+        named after a program it cannot measure.
 
     Returns
     -------
@@ -1640,6 +1707,16 @@ def hpathway_summary_grid(profiles, *, path_names, grid,
     path_names = list(path_names)
     grid = [int(L) for L in grid]
     nG, nP = len(grid), len(path_names)
+
+    if coverage:
+        import warnings
+        fr = [m / t for m, t in (coverage.get(nm, (0, 0)) for nm in path_names) if t]
+        if fr and float(np.median(fr)) < 0.20:
+            warnings.warn(
+                f"median gene-set coverage is {100 * np.median(fr):.0f}% of set size; "
+                "set scores are proxies for the few measured members, so pathway "
+                "names carry little information. Use pathway_competitive_test to "
+                "decide which rows may be named.", stacklevel=2)
 
     score_grid = _pool_score_grid(profiles, path_names, grid,
                                    sample_col=sample_col, layer_col=layer_col,
@@ -1722,3 +1799,79 @@ def hpathway_summary_grid(profiles, *, path_names, grid,
             grid_df = grid_df.rename(columns={"dir": dcol})
 
     return grid_df
+
+
+def pathway_competitive_test(gene_stat, gene_sets, *, hits=None, n_draw=10000,
+                             seed=0, min_genes=3):
+    """Competitive gene-set test against size-matched draws from the same universe.
+
+    The companion to :func:`hpathway_summary_grid`, whose ``fdr_dev`` channel is
+    self-contained. Here each set is scored against random sets of the same size
+    drawn from the genes that were actually measured, which is the question an
+    enrichment claim needs answered.
+
+    The universe is ``gene_stat``'s keys and must stay that way. Substituting a
+    transcriptome-scale background for a targeted panel is not a fix but a much
+    larger bias: the untested genes enter the denominator as non-significant and
+    almost every set becomes spuriously enriched.
+
+    Parameters
+    ----------
+    gene_stat : Mapping[str, float]
+        Per-gene statistic for every measured gene (e.g. cluster mass from
+        :func:`gradient_cluster_mass_screen`). Its keys define the universe.
+    gene_sets : Mapping[str, Sequence[str]]
+        Candidate sets. Genes outside the universe are dropped, and sets left
+        with fewer than ``min_genes`` members are skipped.
+    hits : Iterable[str] | None
+        Genes individually called significant. When given, an over-representation
+        test is added alongside the statistic-based one.
+    n_draw : int
+        Size-matched random draws per set. Default 10000.
+    seed : int
+        RNG seed.
+    min_genes : int
+        Minimum measured members for a set to be testable. Default 3.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per testable set: ``n_measured``, ``mean_stat``,
+        ``null_mean_stat``, ``p_stat``, ``q_stat`` and -- when ``hits`` is given
+        -- ``n_hits``, ``expected_hits``, ``p_overrep``, ``q_overrep``.
+    """
+    from scipy.stats import hypergeom
+
+    universe = list(gene_stat)
+    pos = {g: i for i, g in enumerate(universe)}
+    stat = np.asarray([float(gene_stat[g]) for g in universe])
+    hit_vec = (np.asarray([g in set(hits) for g in universe])
+               if hits is not None else None)
+    rng = np.random.default_rng(seed)
+
+    rows = []
+    for name, genes in gene_sets.items():
+        idx = np.asarray([pos[g] for g in dict.fromkeys(genes) if g in pos], dtype=int)
+        if idx.size < min_genes:
+            continue
+        k = int(idx.size)
+        obs = float(stat[idx].mean())
+        null = stat[rng.choice(len(universe), size=(n_draw, k), replace=True)].mean(1)
+        rec = dict(pathway=name, n_measured=k, mean_stat=obs,
+                   null_mean_stat=float(null.mean()),
+                   p_stat=(1 + int((null >= obs).sum())) / (n_draw + 1))
+        if hit_vec is not None:
+            n_hit = int(hit_vec[idx].sum())
+            rec.update(n_hits=n_hit,
+                       expected_hits=float(k * hit_vec.mean()),
+                       p_overrep=float(hypergeom.sf(n_hit - 1, len(universe),
+                                                    int(hit_vec.sum()), k)))
+        rows.append(rec)
+
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    for col in ("stat", "overrep"):
+        if f"p_{col}" in out:
+            out[f"q_{col}"] = _adjust_pvalues(out[f"p_{col}"].to_numpy(float), "fdr_bh")
+    return out.sort_values("p_stat", kind="mergesort").reset_index(drop=True)
