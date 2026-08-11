@@ -1,6 +1,13 @@
+import textwrap
+
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import MaxNLocator, FuncFormatter
+
+# Column geometry of the H-Pathway colour-key row, as a fraction of the key
+# axes. Shared by the layout pass (which fits the column titles to this width)
+# and the drawing pass.
+_KEY_CB_W, _KEY_GAP = 0.18, 0.04
 
 # Phrasing templates for the y-axis label, keyed by the kind of quantity the
 # H-plot is showing. The y-value is always a per-layer summary, but its meaning
@@ -686,7 +693,7 @@ def plot_hplot_gam_delta(
         Draw a dashed **vertical** reference at layer 0 (the boundary),
         mirroring the ``zero_line`` of the H-GAM Plot top panel so the two
         panels align at the boundary. This is distinct from the horizontal
-        :math:`\Delta = 0` line, which is always drawn. Default ``True``.
+        :math:`\\Delta = 0` line, which is always drawn. Default ``True``.
     boundary_line_color, boundary_line_width, boundary_line_alpha : str, float, float
         Styling of the vertical boundary line.
 
@@ -1455,6 +1462,15 @@ def plot_hloci_fdr(
     contrast_label=None,
     n_groups=None,
     n_samples=None,
+    direction_labels=None,
+    title_prefix="Between-group divergence",
+    title_note=None,
+    ylabel=None,
+    fdr_floor=None,
+    width=9.6,
+    legend_height=1.35,
+    legend_gap=0.22,
+    colorbar_y=0.30,
     fig=None,
     savepath=None,
     dpi=240,
@@ -1481,6 +1497,30 @@ def plot_hloci_fdr(
     layer_to_distance : Mapping[int, float] | None
         Optional physical-distance map from :func:`build_layer_distance_map`.
         When supplied, the band panel receives physical-distance tick labels.
+    direction_labels : sequence[tuple[str, str]] | None
+        ``(name, colour)`` pairs for the cluster-mass legend, e.g.
+        ``[("depressed", "#1f77b4"), ("elevated", "#d62728")]``. When ``None``
+        the legend is derived from the sign of ``peak_col`` and labelled
+        tumour / stroma, which only suits a position-coded screen.
+    title_prefix : str
+        First title line. Defaults to the between-group wording; a pooled,
+        arm-free screen should pass its own.
+    title_note : str | None
+        Extra clause joined into the subtitle, e.g. the colour encoding.
+    ylabel : str | None
+        Overrides the default band-panel y-label.
+    fdr_floor : float | None
+        Lower clip for the FDR panel. A permutation screen cannot resolve an
+        FDR below ``1 / (B + 1)``; pass that value so the bar length reports
+        the test's resolution rather than the resampling budget.
+    width, legend_height, legend_gap : float
+        Figure width, legend-row height and the gap above it, all in inches.
+        The gap is converted to a gridspec fraction so it stays constant no
+        matter how many rows the panel has.
+    colorbar_y : float
+        Vertical position of the colour strips inside the legend row, in axes
+        fraction. Raising it pulls the legend closer to the band panel by
+        consuming the dead space above the strips.
     savepath : str | pathlib.Path | None
         Optional PNG output path. An SVG sibling is also written.
 
@@ -1515,10 +1555,12 @@ def plot_hloci_fdr(
     n_rows = len(selected)
     fig_height = float(np.clip(0.16 * n_rows + 2.0, 4.0, 30.0))
     if fig is None:
-        fig = plt.figure(figsize=(9.6, fig_height + 1.0))
+        fig = plt.figure(figsize=(width, fig_height + legend_height + legend_gap))
+    # hspace is a fraction of the mean axes height, so a fixed value would make
+    # the gap grow with the row count and differ between panels of one figure set.
     grid = fig.add_gridspec(
-        2, 2, width_ratios=[3, 1], height_ratios=[fig_height, 1.0],
-        wspace=0.04, hspace=0.12,
+        2, 2, width_ratios=[3, 1], height_ratios=[fig_height, legend_height],
+        wspace=0.04, hspace=legend_gap / ((fig_height + legend_height) / 2.0),
     )
     band_axis = fig.add_subplot(grid[0, 0])
     fdr_axis = fig.add_subplot(grid[0, 1], sharey=band_axis)
@@ -1529,9 +1571,11 @@ def plot_hloci_fdr(
         selected[direction_col].to_numpy()
         if direction_col is not None else selected[peak_col].to_numpy(dtype=float) > 0
     )
-    title_parts = ["Between-group divergence"]
+    title_parts = [str(title_prefix)]
     if contrast_label:
         title_parts.append(str(contrast_label))
+    if title_note:
+        title_parts.append(str(title_note))
     title_parts.append(f"top {n_rows} {analyte_label} by FDR")
     if n_groups is not None:
         title_parts.append(f"{n_groups} groups")
@@ -1551,7 +1595,8 @@ def plot_hloci_fdr(
         mass_colorbar=False,
         ax=band_axis,
         xlabel="",
-        ylabel=f"top {n_rows} {analyte_label} by FDR (sorted by band centre)",
+        ylabel=(ylabel if ylabel is not None
+                else f"top {n_rows} {analyte_label} by FDR (sorted by band centre)"),
         title="\n".join([title_parts[0], " · ".join(title_parts[1:])]),
         title_fontsize=11,
     )
@@ -1562,7 +1607,8 @@ def plot_hloci_fdr(
         add_border_distance_axis(band_axis, layer_to_distance)
 
     y = np.arange(n_rows)
-    fdr = np.clip(selected[fdr_col].to_numpy(dtype=float), 1e-300, 1.0)
+    floor = float(fdr_floor) if fdr_floor is not None else 1e-300
+    fdr = np.clip(selected[fdr_col].to_numpy(dtype=float), floor, 1.0)
     fdr_axis.barh(y, -np.log10(fdr), height=0.6, color="0.55", alpha=0.85, zorder=3)
     fdr_axis.axvline(-np.log10(fdr_threshold), ls="--", lw=1.0, color="0.35", zorder=2,
                        label=f"FDR = {fdr_threshold:g}")
@@ -1583,15 +1629,18 @@ def plot_hloci_fdr(
             np.full(n, red), np.full(n, green), np.full(n, blue), alpha,
         ]))
 
-    peak = selected[peak_col].to_numpy(dtype=float)
-    directions_for_colorbar = []
-    if np.any(peak > 0):
-        directions_for_colorbar.append(("stroma (L > 0)", up_color))
-    if np.any(peak <= 0):
-        directions_for_colorbar.append(("tumour (L ≤ 0)", down_color))
+    if direction_labels is not None:
+        directions_for_colorbar = [(str(_n), _c) for _n, _c in direction_labels]
+    else:
+        peak = selected[peak_col].to_numpy(dtype=float)
+        directions_for_colorbar = []
+        if np.any(peak > 0):
+            directions_for_colorbar.append(("stroma (L > 0)", up_color))
+        if np.any(peak <= 0):
+            directions_for_colorbar.append(("tumour (L ≤ 0)", down_color))
     for index, (name, color) in enumerate(directions_for_colorbar):
         x0 = (0.04, 0.58)[min(index, 1)]
-        color_axis = colorbar_axis.inset_axes([x0, 0.60, 0.34, 0.14])
+        color_axis = colorbar_axis.inset_axes([x0, colorbar_y, 0.34, 0.14])
         mapper = ScalarMappable(norm=norm, cmap=_ramp(color))
         mapper.set_array([])
         colorbar = fig.colorbar(mapper, cax=color_axis, orientation="horizontal")
@@ -1599,7 +1648,7 @@ def plot_hloci_fdr(
         colorbar.set_label("cluster mass", fontsize=6, labelpad=-1)
         colorbar.ax.tick_params(labelsize=6, length=2, pad=1)
         colorbar_axis.text(
-            x0 + 0.17, 0.84, name, transform=colorbar_axis.transAxes,
+            x0 + 0.17, colorbar_y + 0.20, name, transform=colorbar_axis.transAxes,
             ha="center", va="bottom", fontsize=8, color=color, fontweight="bold",
         )
 
@@ -2014,9 +2063,33 @@ def plot_hpathway_dotplot(
         # decorations.
         _ax_w = cell_in * max(len(layers), 1)     # data-area width  (inches)
         _ax_h = cell_in * max(len(paths), 1)      # data-area height (inches)
-        _ml, _mr, _mt = 2.8, 2.4, 0.9             # left ylabels | right legend | top title
+
+        # The two alpha-ramp column titles are caller-supplied and can be long
+        # ("elevated vs own-window baseline"). Fit them to their column here,
+        # before the figure height is fixed, so they can never collide.
+        if direction_labels and len(direction_labels) == 2:
+            _dn_lbl, _up_lbl = direction_labels
+        else:
+            _dn_lbl, _up_lbl = "depressed", "elevated"
+        _fs_title = 10.5
+        _col_in = (_KEY_CB_W + _KEY_GAP) * _ax_w
+        while _fs_title > 6.5:
+            _budget = max(6, int(_col_in / (_fs_title * 0.60 / 72.0)))
+            if max(len(_up_lbl), len(_dn_lbl)) <= _budget:
+                break
+            _fs_title -= 0.5
+        _budget = max(6, int(_col_in / (_fs_title * 0.60 / 72.0)))
+        _up_wrap = textwrap.wrap(_up_lbl, _budget) or [_up_lbl]
+        _dn_wrap = textwrap.wrap(_dn_lbl, _budget) or [_dn_lbl]
+        _key_rows = max(len(_up_wrap), len(_dn_wrap))
+        _up_short, _dn_short = "\n".join(_up_wrap), "\n".join(_dn_wrap)
+
+        # the bottom key row replaces the right-hand legends, so the right
+        # margin only has to clear the last x tick label
+        _ml, _mt = 2.8, 0.9                       # left ylabels | top title
+        _mr = 0.6 if side_colorbar else 2.4
         if side_colorbar:
-            _key_in = 0.95                        # colour-key strip height (inches)
+            _key_in = 0.95 + 0.17 * (_key_rows - 1)   # colour-key strip height (inches)
             _gap_in = 0.66                        # border-distance axis + its title
             _mb = _gap_in + _key_in               # bottom margin (inches)
             fig_w, fig_h = _ml + _ax_w + _mr, _mb + _ax_h + _mt
@@ -2095,21 +2168,24 @@ def plot_hpathway_dotplot(
     if layer_to_distance is not None:
         add_border_distance_axis(ax, layer_to_distance)
 
-    # size legend (neutral grey; encodes the row-relative dot-size scale only)
-    size_ref = [0.0, 0.5, 1.0]
-    size_labels = ["row min", "row mid", "row max"]
-    size_handles = [Line2D([0], [0], marker="o", linestyle="none",
-                           markerfacecolor="0.5", markeredgecolor="none",
-                           markersize=np.sqrt(np.interp(v, (0.0, 1.0), size_range)),
-                           label=lbl) for v, lbl in zip(size_ref, size_labels)]
-    leg1 = ax.legend(handles=size_handles, title="relative score", loc="upper left",
-                     bbox_to_anchor=(1.01, 1.0), frameon=False, labelspacing=1.1,
-                     fontsize=10, title_fontsize=11)
-    ax.add_artist(leg1)
+    # size legend (neutral grey; encodes the row-relative dot-size scale only).
+    # Skipped when the bottom colour-key row is drawn, which carries the same
+    # information -- otherwise every figure gets two legends.
+    if ax_cbar is None:
+        size_ref = [0.0, 0.5, 1.0]
+        size_labels = ["row min", "row mid", "row max"]
+        size_handles = [Line2D([0], [0], marker="o", linestyle="none",
+                               markerfacecolor="0.5", markeredgecolor="none",
+                               markersize=np.sqrt(np.interp(v, (0.0, 1.0), size_range)),
+                               label=lbl) for v, lbl in zip(size_ref, size_labels)]
+        leg1 = ax.legend(handles=size_handles, title="relative score", loc="upper left",
+                         bbox_to_anchor=(1.01, 1.0), frameon=False, labelspacing=1.1,
+                         fontsize=10, title_fontsize=11)
+        ax.add_artist(leg1)
 
     # direction key (only when a signed direction is drawn): colour = elevated /
     # depressed / no direction, plus a ringed dot for the FDR ring.
-    if D is not None:
+    if D is not None and ax_cbar is None:
         if direction_labels and len(direction_labels) == 2:
             _dn_lbl, _up_lbl = direction_labels
         else:
@@ -2162,8 +2238,11 @@ def plot_hpathway_dotplot(
         _sh = 0.20          # bar height (fraction of ax_cbar)
         _lab_y = 0.86       # shared y for all column titles (closer to top)
         _bot_y = 0.24       # shared y for all bottom captions (closer to elements above)
-        # legend font sizes (150% of the previous values)
-        _fs_title = 10.5
+        # `_fs_title`, `_up_short` and `_dn_short` were fitted to the column
+        # width during layout so the two ramp titles cannot overlap. Titles are
+        # bottom-anchored, so a wrapped title has to start lower to stay inside
+        # the (correspondingly taller) key strip.
+        _lab_y = min(_lab_y, 0.99 - _key_rows * (_fs_title * 1.25 / 72.0) / _key_in)
         _fs_num = 9.0
         _fs_tick = 9.0
 
@@ -2183,15 +2262,8 @@ def plot_hpathway_dotplot(
 
         # (2) two side-by-side alpha-ramp colorbars: elevated (red) and depressed (blue)
         # Each shows the actual dot color with opacity ramping by -log10 FDR
-        if direction_labels and len(direction_labels) == 2:
-            _dn_lbl, _up_lbl = direction_labels
-        else:
-            _dn_lbl, _up_lbl = "depressed", "elevated"
-        _up_short = _up_lbl
-        _dn_short = _dn_lbl
-
-        _cb_w = 0.18
-        _gap = 0.04
+        _cb_w = _KEY_CB_W
+        _gap = _KEY_GAP
         # elevated (red) colorbar
         _cb_x0_up = 0.22
         _cax_up = ax_cbar.inset_axes([_cb_x0_up, _yy, _cb_w, _sh])
