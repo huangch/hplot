@@ -1084,8 +1084,9 @@ def directional_cluster_bands(z, thr=None, min_w=1, cluster_alpha=0.05, grid=Non
     }
 
 
-def deviation_tensor(values, layers, grid, *, baseline_window=None,
-                     min_baseline_layers=3, verbose=True):
+def deviation_tensor(values, layers, grid, *, baseline_window=5,
+                     min_baseline_layers=3, min_baseline_cells=50,
+                     cell_counts=None, verbose=True):
     """Assemble the per-slide deviation tensor for the gradient screen.
 
     Each slide's per-layer values are placed onto a common ``grid`` (the
@@ -1094,21 +1095,36 @@ def deviation_tensor(values, layers, grid, *, baseline_window=None,
     ``baseline_window`` and is independent of the layers that are actually
     tested for bands (those are always the ``grid`` layers):
 
-    * ``None`` or ``"window"`` — baseline = mean over the slide's layers that
-      fall inside ``grid`` (the historical default; deviations are relative to
-      the slide's own window-wide level);
-    * ``"far"`` — baseline = mean over the slide's layers beyond the
-      outer end of ``grid`` (``L > max(grid)``), i.e. the distal far-field
-      away from the base object (a "resting tissue" reference);
-    * ``"core"`` — baseline = mean over the slide's layers beyond the
-      interior end of ``grid`` (``L < min(grid)``), i.e. deep inside the
-      base object;
+    * ``"window"`` — baseline = mean over the slide's layers that fall inside
+      ``grid``; deviations are relative to the slide's own window-wide level.
+      Note that the tested layers then contribute to their own baseline, which
+      bounds how far a band can rise above it while leaving the fall unbounded;
+    * ``"far"`` — baseline = mean over *every* layer beyond the outer end of
+      ``grid`` (``L > max(grid)``). Slides differ widely in how far their tissue
+      extends, so this region is **not comparable across slides**; prefer an
+      explicit width;
+    * ``"core"`` — baseline = mean over every layer beyond the interior end of
+      ``grid`` (``L < min(grid)``), i.e. deep inside the base object;
+    * ``int`` — a fixed-width band anchored to the window edge, which is the
+      recommended form because it gives every slide the same reference region
+      without restating the edge. ``+k`` means the ``k`` layers immediately
+      outside the window, ``(max(grid) + 1, max(grid) + k)``; ``-k`` means the
+      ``k`` layers immediately inside it, ``(min(grid) - k, min(grid) - 1)``;
     * ``(a, b)`` — baseline = mean over the slide's layers with
-      ``a <= L <= b`` (an explicit reference window).
+      ``a <= L <= b`` (an explicit absolute reference window).
 
-    A slide that contributes fewer than ``min_baseline_layers`` layers to its
-    chosen baseline region is dropped from the tensor (its whole row is NaN),
-    so an unstable / poorly sampled reference never enters the pooled statistic.
+    There is no implicit default of ``None``: ``None`` is rejected because the
+    baseline changes every number the screen reports. The default is ``5`` --
+    the five layers immediately outside the window -- which is a stated choice,
+    not an inherited one.
+
+    A slide is dropped from the tensor (its whole row is NaN) when its baseline
+    region is too thin to estimate a reference from, so an unstable reference
+    never enters the pooled statistic. Two independent gates apply:
+    ``min_baseline_layers`` counts *layers*, and ``min_baseline_cells`` counts
+    the *cells* summed over those layers. They catch different failures: a
+    section whose tissue ends just outside the window can still present the
+    required number of layers while each is only a sliver a few cells wide.
 
     Parameters
     ----------
@@ -1118,15 +1134,20 @@ def deviation_tensor(values, layers, grid, *, baseline_window=None,
         Integer layer coordinate for every row of the matching ``values``.
     grid : array-like, ``(n_layers,)``
         Layer coordinates of the analysis window (the tested layers).
-    baseline_window : None | "window" | "far" | "core" | (int, int)
-        Baseline reference-region selector (see above). Default ``None``
-        (self-centre over the analysis window).
+    baseline_window : "window" | "far" | "core" | int | (int, int)
+        Baseline reference-region selector (see above). Default ``5``.
     min_baseline_layers : int
-        Minimum number of baseline-region layers a slide must contribute; a
-        slide below this is skipped (all-NaN). Default 3 (a 3-layer average
-        roughly halves the baseline noise vs a single layer). The default
-        ``"window"`` baseline is almost always well above this, so raising it
-        mainly guards the sparser ``"far"`` / ``"core"`` references.
+        Minimum number of baseline-region *layers* a slide must contribute.
+        Default 3 (a 3-layer average roughly halves the baseline noise vs a
+        single layer). Raises if a fixed-width baseline is narrower than this,
+        since no slide could then pass.
+    min_baseline_cells : int
+        Minimum number of *cells* summed across the slide's baseline-region
+        layers. Default 50. Requires ``cell_counts``; ignored (with a warning
+        when ``verbose``) if those are not supplied. Set to 0 to disable.
+    cell_counts : sequence of ndarray | None
+        Per-slide per-layer cell counts aligned with ``layers``, used by the
+        ``min_baseline_cells`` gate. Default None.
     verbose : bool
         Print a one-line warning when one or more slides are skipped for an
         insufficient baseline region. Default True.
@@ -1155,8 +1176,38 @@ def deviation_tensor(values, layers, grid, *, baseline_window=None,
     if n_units is None:
         raise ValueError("no slide contributes any values.")
 
+    _BW_HELP = ("baseline_window must be 'window', 'far', 'core', an int "
+                "(+k = the k layers just beyond max(grid); -k = the k layers "
+                "just inside min(grid)), or an (a, b) layer range.")
+    if bw is None:
+        raise ValueError("baseline_window must be stated explicitly. " + _BW_HELP)
+    if isinstance(bw, bool):
+        raise ValueError(_BW_HELP)
+    if isinstance(bw, (int, np.integer)):
+        if int(bw) == 0:
+            raise ValueError("baseline_window=0 has no width. " + _BW_HELP)
+        k = int(bw)
+        bw = (hi + 1, hi + k) if k > 0 else (lo + k, lo - 1)
+    elif not (isinstance(bw, str) or (hasattr(bw, "__len__") and len(bw) == 2)):
+        raise ValueError(_BW_HELP)
+
+    if not isinstance(bw, str):
+        _a, _b = int(bw[0]), int(bw[1])
+        _width = _b - _a + 1
+        if _width < min_baseline_layers:
+            raise ValueError(
+                f"baseline region [{_a}, {_b}] spans {_width} layer(s) but "
+                f"min_baseline_layers={min_baseline_layers}, so no slide could "
+                "ever pass. Widen the baseline or lower min_baseline_layers.")
+
+    if cell_counts is not None and len(cell_counts) != n_slides:
+        raise ValueError("cell_counts must have one entry per slide.")
+    if min_baseline_cells and cell_counts is None and verbose:
+        print(f"\u26a0 deviation_tensor: min_baseline_cells={min_baseline_cells} "
+              "ignored because cell_counts was not supplied.")
+
     def _baseline_mask(lay):
-        if bw is None or bw == "window":
+        if bw == "window":
             return np.array([int(L) in gpos for L in lay], dtype=bool)
         if bw == "far":
             return lay > hi
@@ -1165,14 +1216,13 @@ def deviation_tensor(values, layers, grid, *, baseline_window=None,
         try:
             a, b = bw
         except (TypeError, ValueError):
-            raise ValueError(
-                "baseline_window must be None, 'window', 'far', 'core', "
-                "or an (a, b) tuple.")
+            raise ValueError(_BW_HELP)
         return (lay >= int(a)) & (lay <= int(b))
 
     D = np.full((n_slides, nG, n_units), np.nan, dtype=float)
     n_data = 0
-    n_skip_base = 0
+    n_skip_layers = 0
+    n_skip_cells = 0
     for si, (V, lay) in enumerate(zip(values, layers)):
         V = np.asarray(V, dtype=float)
         lay = np.asarray(lay).astype(int)
@@ -1181,18 +1231,28 @@ def deviation_tensor(values, layers, grid, *, baseline_window=None,
         n_data += 1
         bmask = _baseline_mask(lay)
         if int(np.count_nonzero(bmask)) < min_baseline_layers:
-            n_skip_base += 1  # unstable / missing baseline -> skip this slide
+            n_skip_layers += 1  # unstable / missing baseline -> skip this slide
             continue
+        if cell_counts is not None and min_baseline_cells:
+            nc = np.asarray(cell_counts[si], dtype=float)
+            if nc.shape[0] != lay.shape[0]:
+                raise ValueError(
+                    f"cell_counts[{si}] has {nc.shape[0]} rows but layers has "
+                    f"{lay.shape[0]}.")
+            if float(np.nansum(nc[bmask])) < min_baseline_cells:
+                n_skip_cells += 1  # layers present but only a sliver of tissue
+                continue
         base = V[bmask].mean(axis=0)
         for k, L in enumerate(lay):
             gi = gpos.get(int(L))
             if gi is not None:
                 D[si, gi] = V[k] - base
-    if verbose and n_skip_base:
-        region = bw if bw is not None else "window"
-        print(f"\u26a0 deviation_tensor: skipped {n_skip_base}/{n_data} slide(s) "
-              f"with < {min_baseline_layers} baseline layer(s) in {region!r} "
-              f"region (excluded from the pooled statistic).")
+    if verbose and (n_skip_layers or n_skip_cells):
+        print(f"\u26a0 deviation_tensor: skipped "
+              f"{n_skip_layers + n_skip_cells}/{n_data} slide(s) in {bw!r} "
+              f"baseline region ({n_skip_layers} with < {min_baseline_layers} "
+              f"layer(s), {n_skip_cells} with < {min_baseline_cells} cell(s)); "
+              "excluded from the pooled statistic.")
     return D
 
 
@@ -1590,7 +1650,8 @@ def _pool_score_grid(profiles, path_names, grid, *, sample_col, layer_col,
 
 
 def _deviation_fdr_grid(profiles, path_names, grid, *, sample_col, layer_col,
-                        baseline_window="far", min_baseline_layers=3,
+                        baseline_window=5, min_baseline_layers=3,
+                        min_baseline_cells=50, count_col=None,
                         min_per_group=3, alternative="two-sided", verbose=True):
     """Per (layer, pathway) deviation FDR: per-slide deviation from a baseline
     region (``deviation_tensor``) tested per layer with a signed-rank Wilcoxon,
@@ -1603,13 +1664,17 @@ def _deviation_fdr_grid(profiles, path_names, grid, *, sample_col, layer_col,
     """
     nG, nP = len(grid), len(path_names)
     vals, lays = [], []
+    cnts = [] if count_col else None
     for _sid, sub in profiles.groupby(sample_col):
         sub = sub.sort_values(layer_col)
         vals.append(sub[path_names].to_numpy(dtype=float))
         lays.append(sub[layer_col].to_numpy(dtype=int))
+        if cnts is not None:
+            cnts.append(sub[count_col].to_numpy(dtype=float))
     Ddev = deviation_tensor(vals, lays, grid, baseline_window=baseline_window,
                             min_baseline_layers=min_baseline_layers,
-                            verbose=verbose)
+                            min_baseline_cells=min_baseline_cells,
+                            cell_counts=cnts, verbose=verbose)
     p_dev = np.full((nG, nP), np.nan)
     dir_dev = np.full((nG, nP), np.nan)
     for i in range(nG):
@@ -1632,8 +1697,9 @@ def _deviation_fdr_grid(profiles, path_names, grid, *, sample_col, layer_col,
 
 def hpathway_summary_grid(profiles, *, path_names, grid,
                           sample_col="sample", layer_col="layer",
-                          score_agg="median", deviation="far",
-                          min_baseline_layers=3, min_per_group=3,
+                          score_agg="median", deviation=5,
+                          min_baseline_layers=3, min_baseline_cells=50,
+                          count_col=None, min_per_group=3,
                           deviation_alternative="two-sided",
                           contrasts=None, long_df=None,
                           value_col="score", pathway_col="pathway",
@@ -1677,11 +1743,17 @@ def hpathway_summary_grid(profiles, *, path_names, grid,
         Identifier columns in ``profiles``.
     score_agg : str
         Per-slide per-layer aggregate for the pooled score. Default ``"median"``.
-    deviation : None | "window" | "far" | "core" | (int, int)
+    deviation : "window" | "far" | "core" | int | (int, int) | "skip"
         Baseline reference-region selector for the deviation FDR
-        (see :func:`deviation_tensor`). ``None`` skips ``fdr_dev``.
+        (see :func:`deviation_tensor`). Default ``5``. ``"skip"`` omits
+        ``fdr_dev`` altogether. ``None`` raises.
     min_baseline_layers, min_per_group : int
-        Deviation baseline floor and minimum non-NaN samples per test.
+        Deviation baseline layer floor and minimum non-NaN samples per test.
+    min_baseline_cells : int
+        Minimum cells summed over a slide's baseline layers. Needs ``count_col``.
+    count_col : str | None
+        Column of ``profiles`` holding per-(sample, layer) cell counts, used by
+        the ``min_baseline_cells`` gate. Default None (gate inactive).
     deviation_alternative : str
         Wilcoxon alternative for the deviation test.
     contrasts : dict[str, tuple[str, sequence]] | None
@@ -1722,14 +1794,22 @@ def hpathway_summary_grid(profiles, *, path_names, grid,
                                    sample_col=sample_col, layer_col=layer_col,
                                    score_agg=score_agg)
 
-    if deviation is not None:
+    if deviation is None:
+        raise ValueError(
+            'deviation must be stated explicitly: "window", "far", "core", an '
+            'int width, an (a, b) range, or "skip" to omit the deviation '
+            'channel. None is rejected because it reads as a baseline choice '
+            'but would silently drop the fdr_dev column.')
+    if isinstance(deviation, str) and deviation == "skip":
+        fdr_dev = dir_dev = None
+    else:
         fdr_dev, dir_dev = _deviation_fdr_grid(
             profiles, path_names, grid, sample_col=sample_col,
             layer_col=layer_col, baseline_window=deviation,
-            min_baseline_layers=min_baseline_layers, min_per_group=min_per_group,
+            min_baseline_layers=min_baseline_layers,
+            min_baseline_cells=min_baseline_cells, count_col=count_col,
+            min_per_group=min_per_group,
             alternative=deviation_alternative, verbose=verbose)
-    else:
-        fdr_dev = dir_dev = None
 
     rows = []
     for i, L in enumerate(grid):
