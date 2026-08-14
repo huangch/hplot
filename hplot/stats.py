@@ -1715,8 +1715,9 @@ def hpathway_summary_grid(profiles, *, path_names, grid,
        the one that carries information, because such panels are curated so that
        most of their genes track the contrast of interest; a self-contained test
        then calls a large fraction of sets significant regardless of what the
-       sets contain, and the pathway *names* become uninterpretable. Pair this
-       function with :func:`pathway_competitive_test` before naming any row.
+       sets contain, and the pathway *names* become uninterpretable. Use
+       :func:`hpathway_layer_ora` (layer-resolved) or
+       :func:`pathway_competitive_test` (pooled) before naming any row.
 
     Given per-slide, per-layer pathway/signature profiles this assembles the
     long grid the dotplot consumes, so a user does not re-implement the pooled
@@ -1955,3 +1956,551 @@ def pathway_competitive_test(gene_stat, gene_sets, *, hits=None, n_draw=10000,
         if f"p_{col}" in out:
             out[f"q_{col}"] = _adjust_pvalues(out[f"p_{col}"].to_numpy(float), "fdr_bh")
     return out.sort_values("p_stat", kind="mergesort").reset_index(drop=True)
+
+
+def hpathway_layer_ora(gene_bands, gene_sets, *, grid, gene_col="gene",
+                       fdr_col="fdr_global", band_lo_col="band_lo",
+                       band_hi_col="band_hi", alpha=0.05, min_genes=5,
+                       min_run=2, verbose=True):
+    """Per-layer over-representation of a gene set among border-band genes.
+
+    This is the layer-resolved form of :func:`pathway_competitive_test`, and the
+    channel to report instead of ``hpathway_summary_grid``'s ``fdr_dev``.
+
+    Why aggregate counts rather than profiles
+    -----------------------------------------
+    Averaging a set's member *profiles* and testing the average is not usable
+    here. Tissue-level gradients act on every gene, so any set of genes yields a
+    smooth, reproducible, non-flat profile; worse, the members of a real set are
+    co-expressed, so their average cancels less noise than a random set's does
+    and the set is compared against a null that is too tight. Measured on a
+    5046-gene bladder panel the variance inflation factor of the 50 Hallmark
+    sets ran from 3.0 to 77 (median 18), i.e. a set of 73 genes behaved like
+    ~4 independent ones.
+
+    Counting sidesteps both problems. Each gene has already been tested on its
+    own against the screen's permutation null, so the shared gradient is removed
+    *before* any set-level aggregation, and the set statistic is then a
+    hypergeometric count rather than an average of correlated curves.
+
+    The per-layer background is not flat and that is the point
+    ---------------------------------------------------------
+    The fraction of the panel carrying a band varies strongly along the ruler --
+    on the bladder cohort, 7-8% of genes at layers -5..+1 against 42-48% at
+    +3..+15. A pooled test compares every set against one global rate and cannot
+    see this; testing layer by layer compares each set against the rate that
+    actually applies there.
+
+    Parameters
+    ----------
+    gene_bands : pandas.DataFrame
+        One row per **measured** gene, as produced by
+        :func:`gradient_cluster_mass_screen`: a gene id, an FDR, and the
+        inclusive band limits. Its rows define the universe, which must stay the
+        measured panel -- substituting a transcriptome-wide background lets the
+        unmeasured genes enter the denominator as non-significant and makes
+        almost every set look enriched.
+    gene_sets : Mapping[str, Sequence[str]]
+        Candidate sets. Members outside the universe are dropped.
+    grid : array-like[int]
+        Layers to test.
+    alpha : float
+        FDR below which a gene counts as carrying a band. Default 0.05.
+    min_genes : int
+        Minimum measured members for a set to be tested.
+    min_run : int
+        Consecutive significant layers required to call a set significant. A
+        single isolated layer is not a band, and the same contiguity requirement
+        is what the gene-level cluster-mass screen applies. This rule does real
+        work: on the bladder cohort ``Spermatogenesis`` reaches q = 3.2e-3 at one
+        layer and is rejected here for having no second one.
+
+    Returns
+    -------
+    grid_df : pandas.DataFrame
+        One row per (pathway, layer): ``k``, ``hits``, ``expected``,
+        ``background_frac``, ``p``, ``q`` (BH over the whole grid).
+    summary : pandas.DataFrame
+        One row per pathway: ``n_measured``, ``n_sig_layers``, ``max_run``,
+        ``best_layer``, ``best_q``, ``significant``.
+
+    Notes
+    -----
+    Two approximations are inherited from over-representation analysis and
+    should be stated wherever results are reported. The hypergeometric assumes
+    genes are independent, so co-expression makes the counts over-dispersed and
+    p-values mildly anti-conservative; and a gene whose band spans several
+    layers is counted at each of them, so a pathway's layer tests are strongly
+    dependent (BH remains valid under positive dependence).
+    """
+    from scipy.stats import hypergeom
+
+    grid = np.asarray(grid).astype(int)
+    need = {gene_col, fdr_col, band_lo_col, band_hi_col}
+    missing = need - set(gene_bands.columns)
+    if missing:
+        raise ValueError(f"gene_bands is missing column(s): {sorted(missing)}")
+
+    genes = gene_bands[gene_col].astype(str).to_numpy()
+    pos = {g: i for i, g in enumerate(genes)}
+    N = genes.size
+    lo = gene_bands[band_lo_col].to_numpy(dtype=float)
+    hi = gene_bands[band_hi_col].to_numpy(dtype=float)
+    sig = (gene_bands[fdr_col].to_numpy(dtype=float) < alpha) & np.isfinite(lo)
+    cover = np.array([sig & (lo <= L) & (hi >= L) for L in grid])   # (n_grid, N)
+    K = cover.sum(axis=1)
+
+    rows, kept = [], []
+    for name, members in gene_sets.items():
+        idx = np.array([pos[g] for g in dict.fromkeys(members) if g in pos],
+                       dtype=int)
+        if idx.size < min_genes:
+            continue
+        k = int(idx.size)
+        kept.append((name, k))
+        for i, L in enumerate(grid):
+            x = int(cover[i][idx].sum())
+            rows.append(dict(pathway=name, layer=int(L), k=k, hits=x,
+                             expected=float(k * K[i] / N),
+                             background_frac=float(K[i] / N),
+                             p=float(hypergeom.sf(x - 1, N, int(K[i]), k))))
+    if not rows:
+        return pd.DataFrame(), pd.DataFrame()
+
+    grid_df = pd.DataFrame(rows)
+    grid_df["q"] = _adjust_pvalues(grid_df["p"].to_numpy(float), "fdr_bh")
+
+    out = []
+    for name, k in kept:
+        sub = grid_df[grid_df.pathway == name].sort_values("layer")
+        hit = (sub["q"].to_numpy() < alpha)
+        run = best = 0
+        for h in hit:
+            run = run + 1 if h else 0
+            best = max(best, run)
+        j = int(np.argmin(sub["q"].to_numpy()))
+        out.append(dict(pathway=name, n_measured=k, n_sig_layers=int(hit.sum()),
+                        max_run=int(best),
+                        best_layer=int(sub["layer"].to_numpy()[j]),
+                        best_q=float(sub["q"].to_numpy()[j]),
+                        significant=bool(best >= min_run)))
+    summary = pd.DataFrame(out).sort_values(
+        ["significant", "max_run", "best_q"], ascending=[False, False, True],
+        kind="mergesort").reset_index(drop=True)
+
+    if verbose:
+        print(f"per-layer ORA: {int(summary['significant'].sum())}/"
+              f"{len(summary)} sets with >= {min_run} consecutive layers at "
+              f"q<{alpha} | {int((grid_df['q'] < alpha).sum())} of "
+              f"{len(grid_df)} cells | universe {N} genes, "
+              f"{int(sig.sum())} with a band ({100 * sig.mean():.1f}%)")
+    return grid_df, summary
+
+
+def hpathway_score_grid(profiles, *, path_names, grid, sample_col="sample",
+                        layer_col="layer", score_agg="median", baseline="window",
+                        min_baseline_layers=3, min_baseline_cells=50,
+                        count_col=None, verbose=True):
+    """Tidy (pathway x layer) activity grid for an already-chosen signature list.
+
+    The companion to :func:`hpathway_layer_ora`, for the case where *which*
+    pathways matter has been settled elsewhere -- typically on a different assay
+    with a neutral gene background -- and the only remaining question is **where
+    each one sits on the border ruler**. Nothing here selects, ranks or tests a
+    pathway, so the output cannot be read as enrichment.
+
+    Two channels are returned, both directionless:
+
+    * ``score``     : pooled activity = mean across units of each unit's
+      per-layer ``score_agg`` (equal weight per unit);
+    * ``deviation`` : the same pooled value after each unit is centred on its own
+      baseline region (:func:`deviation_tensor`), which is what makes profiles
+      from units of different overall level comparable.
+
+    ``deviation`` is signed, but the sign is **not** a pathway direction: a gene
+    set contains positively and negatively regulated members, so the mean of its
+    members is not a statement that the program is elevated or depressed. Centring
+    also forces the sign to flip somewhere along the ruler when ``baseline`` is
+    ``"window"`` (each unit sums to ~0 over the tested layers), so only the
+    *position* of the crossing carries information -- never its existence, and
+    never its direction. Plot with ``direction_col=None``.
+
+    No significance channel is produced. The earlier ``fdr_dev`` test asked
+    whether a set departed from *its own* baseline, which on a targeted panel is
+    close to preordained and made pathway names uninterpretable; when a p-value
+    is needed, compare a set against size-matched random draws from the same
+    panel (:func:`pathway_competitive_test`) or count band-carrying members per
+    layer (:func:`hpathway_layer_ora`).
+
+    Parameters
+    ----------
+    profiles : pandas.DataFrame
+        Wide per-(unit, layer) table with one column per name in ``path_names``
+        plus ``sample_col`` and ``layer_col``. The unit should be the level at
+        which observations are independent (usually the patient, not the slide).
+    path_names : sequence[str]
+        Signature columns to place on the grid.
+    grid : array-like[int]
+        Layer coordinates of the analysis window.
+    score_agg : str
+        Per-unit per-layer aggregate for the pooled score. Default ``"median"``.
+    baseline : "window" | "far" | "core" | int | (int, int) | "skip"
+        Baseline reference region for ``deviation`` (see :func:`deviation_tensor`).
+        ``"skip"`` omits the ``deviation`` column.
+    count_col : str | None
+        Per-(unit, layer) cell counts, used by the ``min_baseline_cells`` gate.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per (pathway, layer) with ``pathway``, ``layer``, ``score``,
+        ``n_units`` and -- unless ``baseline="skip"`` -- ``deviation``.
+    """
+    path_names = list(path_names)
+    grid = [int(L) for L in grid]
+    nG, nP = len(grid), len(path_names)
+
+    score_grid = _pool_score_grid(profiles, path_names, grid,
+                                  sample_col=sample_col, layer_col=layer_col,
+                                  score_agg=score_agg)
+
+    n_units = np.zeros((nG, nP), dtype=int)
+    gpos = {int(L): i for i, L in enumerate(grid)}
+    for j, nm in enumerate(path_names):
+        piv = profiles.pivot_table(index=sample_col, columns=layer_col, values=nm,
+                                   aggfunc=score_agg)
+        for L in grid:
+            if L in piv.columns:
+                n_units[gpos[int(L)], j] = int(np.isfinite(
+                    piv[L].to_numpy(dtype=float)).sum())
+
+    dev_grid = None
+    if not (isinstance(baseline, str) and baseline == "skip"):
+        vals, lays = [], []
+        cnts = [] if count_col else None
+        for _uid, sub in profiles.groupby(sample_col):
+            sub = sub.sort_values(layer_col)
+            vals.append(sub[path_names].to_numpy(dtype=float))
+            lays.append(sub[layer_col].to_numpy(dtype=int))
+            if cnts is not None:
+                cnts.append(sub[count_col].to_numpy(dtype=float))
+        D = deviation_tensor(vals, lays, grid, baseline_window=baseline,
+                             min_baseline_layers=min_baseline_layers,
+                             min_baseline_cells=min_baseline_cells,
+                             cell_counts=cnts, verbose=verbose)
+        with np.errstate(invalid="ignore"):
+            dev_grid = np.nanmean(D, axis=0)
+
+    rows = []
+    for i, L in enumerate(grid):
+        for j, nm in enumerate(path_names):
+            rec = dict(pathway=nm, layer=int(L), score=score_grid[i, j],
+                       n_units=int(n_units[i, j]))
+            if dev_grid is not None:
+                rec["deviation"] = float(dev_grid[i, j])
+            rows.append(rec)
+    return pd.DataFrame(rows)
+
+
+def _pathway_deviation_tensor(profiles, path_names, grid, *, sample_col, layer_col,
+                              baseline, min_baseline_layers, min_baseline_cells,
+                              count_col, verbose):
+    """(unit x layer x pathway) deviations, the unit ids, and the per-(unit, layer)
+    cell counts, all in matching order."""
+    units, vals, lays = [], [], []
+    cnts = [] if count_col else None
+    for uid, sub in profiles.groupby(sample_col):
+        sub = sub.sort_values(layer_col)
+        units.append(uid)
+        vals.append(sub[path_names].to_numpy(dtype=float))
+        lays.append(sub[layer_col].to_numpy(dtype=int))
+        if cnts is not None:
+            cnts.append(sub[count_col].to_numpy(dtype=float))
+    D = deviation_tensor(vals, lays, grid, baseline_window=baseline,
+                         min_baseline_layers=min_baseline_layers,
+                         min_baseline_cells=min_baseline_cells,
+                         cell_counts=cnts, verbose=verbose)
+    gpos = {int(L): i for i, L in enumerate(grid)}
+    C = np.full((len(units), len(grid)), np.nan)
+    if cnts is not None:
+        for u, (lay, cnt) in enumerate(zip(lays, cnts)):
+            for L, n in zip(lay, cnt):
+                if int(L) in gpos:
+                    C[u, gpos[int(L)]] = n
+    return np.asarray(units, dtype=object), D, C
+
+
+def _arm_assignments(arm_vec, arms, pair_ids, n_perm, rng):
+    """Every relabelling the design actually allows, or a Monte-Carlo sample of them.
+
+    Returns ``(iterator, n_draw, exact)``. Which relabellings are legal is the whole
+    question: a patient-level label may move between patients, a within-patient label
+    (e.g. Pre/Post) may only swap inside its own patient. Permuting the second as if it
+    were the first tests a hypothesis nobody asked.
+    """
+    from itertools import combinations, product
+    from math import comb
+
+    n = len(arm_vec)
+    if pair_ids is None:
+        idx1 = np.flatnonzero(arm_vec == arms[1])
+        k, total = len(idx1), int(comb(n, len(idx1)))
+        if n_perm is None or total <= n_perm:
+            return (np.asarray(c, dtype=int) for c in combinations(range(n), k)), total, True
+        return (rng.permutation(n)[:k] for _ in range(int(n_perm))), int(n_perm), False
+
+    pairs = [np.flatnonzero(pair_ids == p) for p in pd.unique(pair_ids)]
+    for p in pairs:
+        if len(p) != 2:
+            raise ValueError(
+                "paired mode needs exactly two units per pair; got "
+                f"{len(p)} for one pair. Drop unpaired units first.")
+    order = [(p[0], p[1]) if arm_vec[p[0]] == arms[1] else (p[1], p[0]) for p in pairs]
+    total = 2 ** len(pairs)
+
+    def _from_signs(signs):
+        return np.asarray([a if s else b for (a, b), s in zip(order, signs)], dtype=int)
+
+    if n_perm is None or total <= n_perm:
+        return (_from_signs(s) for s in product([True, False], repeat=len(pairs))), total, True
+    return (_from_signs(rng.random(len(pairs)) < 0.5) for _ in range(int(n_perm))), \
+        int(n_perm), False
+
+
+def hpathway_arm_contrast(profiles, *, path_names, grid, arm_of,
+                          sample_col="patient", layer_col="layer",
+                          baseline="window", min_baseline_layers=3,
+                          min_baseline_cells=50, count_col=None, min_cells=0,
+                          pair_of=None, n_perm=None, seed=0, alpha=0.05,
+                          null_quantile=0.95, null_keep=4000,
+                          verbose=True):
+    """Do two groups differ in where a pathway sits along the border ruler?
+
+    The third H-Pathway channel, alongside :func:`hpathway_layer_ora` (which sets are
+    border-organised) and :func:`hpathway_score_grid` (where a fixed set sits). Use it
+    when the comparison is between arms -- treated vs untreated, relapse vs stable --
+    rather than against a background.
+
+    Why this rather than an enrichment test per arm
+    -----------------------------------------------
+    Over-representation needs genes that individually clear a significance gate, and
+    supplies none of its own when they do not: with no gene above the gate the
+    hypergeometric background is zero at every layer and nothing is computable, however
+    the threshold is set. This test never asks about individual genes. It compares the
+    arms' pooled pathway *profiles*, so a difference spread thinly over many genes --
+    the case an enrichment test is least able to see -- still contributes.
+
+    Running the enrichment test once per arm and reading the two panels side by side is
+    not an alternative: it compares two *lists*, contains no contrast, and the arm with
+    more units will look stronger for that reason alone.
+
+    Parameters
+    ----------
+    profiles : pandas.DataFrame
+        Wide per-(unit, layer) activity table, as produced by
+        :func:`hplot.pathway_layer_profile` and collapsed to the independent unit.
+    arm_of : Mapping | callable
+        Unit -> arm label. Exactly two arms must remain after mapping.
+    pair_of : Mapping | callable | None
+        Unit -> pair id, for a **within-pair** label such as Pre/Post. When given, the
+        null swaps arms inside each pair (2^n_pairs assignments) instead of moving
+        labels between units. Leave ``None`` for a unit-level label such as patient
+        outcome. This is not a tuning knob: choosing wrongly tests the wrong hypothesis.
+    n_perm : int | None
+        ``None`` (default) enumerates every legal assignment when that is feasible,
+        which makes the p-values exact. An integer caps the work and switches to
+        Monte-Carlo sampling once the exhaustive count exceeds it.
+    count_col : str | None
+        Per-(unit, layer) cell counts. Required by ``min_cells`` and by the
+        ``min_baseline_cells`` gate.
+    min_cells : int
+        Minimum cells a unit must contribute to a layer for that unit-layer to be
+        used. Default 0 (off). The profile is already a per-cell mean, so counts do
+        not inflate the value -- but they do set its precision, and a unit with a
+        handful of cells in a layer supplies an essentially random mean.
+    null_quantile : float
+        Quantile of the per-cell null used as the chance reference. Default 0.95.
+    null_keep : int
+        Cap on how many null draws are retained to estimate that quantile; draws are
+        subsampled at random (unbiased) above it, so an exhaustive null of 210 or 1024
+        assignments is kept in full while a large Monte-Carlo run stays bounded.
+
+    Returns
+    -------
+    grid_df : pandas.DataFrame
+        One row per (pathway, layer): ``gap`` (arm2 − arm1 of the baseline-centred
+        profile), ``abs_gap``, ``null_ref`` (the ``null_quantile`` of |gap| under the
+        null *for that same cell*), ``ratio_vs_null`` = ``abs_gap / null_ref``,
+        ``p``, ``q`` (BH over the whole grid) and ``q_row`` (BH within that pathway's
+        own layers, which is the family implied when each set is its own question).
+
+        ``ratio_vs_null`` is the quantity to plot: it carries its own reference, so
+        1.0 is chance level and the panel needs no external calibration. Note that
+        exceeding 1.0 in a single cell is not a finding -- within one pathway, about
+        one layer in twenty does so under the null by definition of the quantile.
+        The per-pathway verdict is ``p_exact``, which already pays for the search
+        across layers.
+    summary : pandas.DataFrame
+        One row per pathway: ``max_abs_gap`` (largest raw between-arm difference),
+        ``max_ratio_vs_null`` (the same in units of chance), ``peak_layer`` (where
+        ``ratio_vs_null`` peaks -- the raw scale would point at the noisiest layer
+        instead), ``p_exact`` (max-statistic
+        over layers, so the layer search is already paid for), ``q_exact``, plus the
+        design facts ``n_assignments``, ``exact`` and ``p_floor`` so the resolution
+        limit can be checked in code rather than read off a printout, and
+        ``arm_pos`` / ``arm_neg`` naming which arm a positive ``gap`` refers to (the
+        arm order is decided internally, so a caller must not guess it when labelling
+        a legend).
+
+    Notes
+    -----
+    **Read the resolution report before reading a row of zeros.** A permutation p-value
+    cannot fall below ``1 / (n_draw + 1)``, and ``n_draw`` is fixed by the design, not by
+    effort: four cases against six controls allow only 210 assignments, so no p is
+    smaller than 0.0048. What that implies for a *corrected* threshold is not simply
+    ``p_floor x m``: BH places the k-th smallest at ``p_floor x m / k``, so alpha is
+    reachable as soon as k tests sit at the floor together -- two of 21 layers in the
+    example above. The report prints that count for each family, and flags the case
+    where it exceeds the number of tests available, because "nothing was significant"
+    and "nothing could have been" are different findings.
+
+    ``gap`` is signed and names which arm is higher; that is a statement about the two
+    groups, not about the pathway being up- or down-regulated (a set mixes positively
+    and negatively regulated members, so it has no such direction).
+    """
+    path_names = list(path_names)
+    grid = [int(L) for L in grid]
+    nG, nP = len(grid), len(path_names)
+    rng = np.random.default_rng(seed)
+
+    units, D, C = _pathway_deviation_tensor(
+        profiles, path_names, grid, sample_col=sample_col, layer_col=layer_col,
+        baseline=baseline, min_baseline_layers=min_baseline_layers,
+        min_baseline_cells=min_baseline_cells, count_col=count_col, verbose=verbose)
+
+    # A unit contributes a layer only when it has enough cells there to estimate a mean.
+    # Without this the sparse end of the ruler dominates the raw effect purely through
+    # noise: one slide with three cells in a layer moves that layer's group mean freely.
+    if min_cells and count_col:
+        _thin = np.isfinite(C) & (C < float(min_cells))
+        if _thin.any():
+            D[_thin] = np.nan
+            if verbose:
+                print(f"  dropped {int(_thin.sum())} of {C.size} (unit, layer) cells "
+                      f"with < {min_cells} cells")
+
+    _get = (lambda u: arm_of(u)) if callable(arm_of) else (lambda u: arm_of.get(u))
+    arm_vec = np.asarray([_get(u) for u in units], dtype=object)
+    keep = np.asarray([a is not None and a == a for a in arm_vec], dtype=bool)
+    units, arm_vec, D = units[keep], arm_vec[keep], D[keep]
+    arms = list(pd.unique(arm_vec))
+    if len(arms) != 2:
+        raise ValueError(f"hpathway_arm_contrast needs exactly two arms; got {arms}.")
+
+    pair_ids = None
+    if pair_of is not None:
+        _pget = (lambda u: pair_of(u)) if callable(pair_of) else (lambda u: pair_of.get(u))
+        pair_ids = pd.Series([_pget(u) for u in units])
+
+    i0 = np.flatnonzero(arm_vec == arms[0])
+    i1 = np.flatnonzero(arm_vec == arms[1])
+
+    def _gap(sel1):
+        sel0 = np.setdiff1d(np.arange(len(units)), sel1, assume_unique=False)
+        with np.errstate(invalid="ignore"):
+            return np.nanmean(D[sel1], axis=0) - np.nanmean(D[sel0], axis=0)
+
+    obs = _gap(i1)
+    obs_abs = np.abs(obs)
+
+    it, n_draw, exact = _arm_assignments(arm_vec, arms, pair_ids, n_perm, rng)
+    cnt = np.zeros((nG, nP))
+    max_null = np.empty((n_draw, nP))
+    obs_max = np.nanmax(np.where(np.isfinite(obs_abs), obs_abs, -np.inf), axis=0)
+    # Per-cell null draws are kept so the panel can size a dot in units of chance
+    # rather than raw effect. Subsampled (unbiased) when the null is large.
+    keep_p = min(1.0, float(null_keep) / max(n_draw, 1))
+    kept = []
+    for d, sel1 in enumerate(it):
+        g = np.abs(_gap(np.asarray(sel1, dtype=int)))
+        cnt += (g >= obs_abs - 1e-12)
+        max_null[d] = np.nanmax(np.where(np.isfinite(g), g, -np.inf), axis=0)
+        if keep_p >= 1.0 or rng.random() < keep_p:
+            kept.append(g.astype(np.float32))
+    null_ref = (np.nanpercentile(np.stack(kept), 100.0 * null_quantile, axis=0)
+                if kept else np.full((nG, nP), np.nan))
+
+    p = (1.0 + cnt) / (n_draw + 1.0)
+    p = np.where(np.isfinite(obs_abs), p, np.nan)
+    q = np.full(nG * nP, np.nan)
+    flat = p.ravel()
+    m = np.isfinite(flat)
+    q[m] = benjamini_hochberg(flat[m])
+    q = q.reshape(nG, nP)
+
+    # Per-pathway BH across that pathway's own layers. This is the family the design
+    # implies when each set is a separate pre-specified question, and it is far less
+    # conservative than correcting across the whole grid. Adjacent layers are positively
+    # correlated, under which BH remains valid.
+    q_row = np.full((nG, nP), np.nan)
+    for j in range(nP):
+        col = p[:, j]
+        ok = np.isfinite(col)
+        if ok.any():
+            q_row[ok, j] = benjamini_hochberg(col[ok])
+
+    grid_df = pd.DataFrame([
+        dict(pathway=nm, layer=int(L), gap=float(obs[i, j]),
+             abs_gap=float(obs_abs[i, j]), null_ref=float(null_ref[i, j]),
+             ratio_vs_null=float(obs_abs[i, j] / null_ref[i, j])
+             if np.isfinite(null_ref[i, j]) and null_ref[i, j] > 0 else np.nan,
+             p=float(p[i, j]), q=float(q[i, j]), q_row=float(q_row[i, j]))
+        for i, L in enumerate(grid) for j, nm in enumerate(path_names)])
+
+    p_exact = (1.0 + (max_null >= obs_max[None, :] - 1e-12).sum(axis=0)) / (n_draw + 1.0)
+    # The peak is read off the chance-standardised profile. On the raw scale it would
+    # simply mark the noisiest layer -- typically the sparse end of the ruler, where a
+    # unit contributing a handful of cells inflates the group mean.
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ratio = np.where(np.isfinite(null_ref) & (null_ref > 0), obs_abs / null_ref, np.nan)
+    peak = [int(grid[int(np.nanargmax(np.where(np.isfinite(ratio[:, j]),
+                                               ratio[:, j], -np.inf)))])
+            for j in range(nP)]
+    max_ratio = np.nanmax(np.where(np.isfinite(ratio), ratio, -np.inf), axis=0)
+    summary = pd.DataFrame(dict(
+        pathway=path_names, max_abs_gap=obs_max, max_ratio_vs_null=max_ratio,
+        peak_layer=peak, p_exact=p_exact)).assign(
+        q_exact=lambda d: benjamini_hochberg(d["p_exact"].to_numpy()),
+        arm_pos=str(arms[1]), arm_neg=str(arms[0]),
+        n_assignments=int(n_draw), exact=bool(exact),
+        p_floor=1.0 / (n_draw + 1.0),
+    ).sort_values("p_exact", kind="mergesort").reset_index(drop=True)
+
+    p_floor = 1.0 / (n_draw + 1.0)
+    m_tested = int(np.isfinite(p).sum())
+
+    def _k_min(m):
+        # BH puts the k-th smallest at p_floor * m / k, so alpha becomes reachable once
+        # this many tests sit at the floor together. Quoting p_floor * m alone describes
+        # only the case where a single test is extreme, and understates BH badly.
+        return int(np.floor(p_floor * m / alpha)) + 1
+
+    if verbose:
+        print(f"arm contrast {arms[1]} - {arms[0]}: {len(i1)} vs {len(i0)} units | "
+              f"{'EXHAUSTIVE' if exact else 'Monte-Carlo'} null, {n_draw} assignments "
+              f"({'within-pair swap' if pair_ids is not None else 'unit relabel'})")
+        print(f"  smallest attainable p = {p_floor:.4g}")
+        print(f"  BH reaches q<{alpha:g} once this many tests sit at that floor "
+              f"together: {_k_min(nG)} of {nG} layers within a pathway (q_row) | "
+              f"{_k_min(nP)} of {nP} pathways (q_exact) | "
+              f"{_k_min(m_tested)} of {m_tested} cells (q, whole grid)")
+        _unreach = [nm for nm, m in (("q_row", nG), ("q_exact", nP),
+                                     ("q (whole grid)", m_tested)) if _k_min(m) > m]
+        if _unreach:
+            print(f"  *** out of reach at this design (would need more tests at the "
+                  f"floor than exist): {', '.join(_unreach)}")
+        print(f"  observed: q_row<{alpha:g} in {int((q_row < alpha).sum())} cells | "
+              f"p_exact<{alpha:g} in {int((summary['p_exact'] < alpha).sum())} of {nP} "
+              f"pathways (chance ~{alpha * nP:.1f}) | "
+              f"q<{alpha:g} in {int((q < alpha).sum())} cells")
+    return grid_df, summary

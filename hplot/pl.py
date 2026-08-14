@@ -45,18 +45,15 @@ def hplot_from_csv(path, *, group_col=None, ax=None, ci_show=True,
     )
 
 
-def hpathway_summary_from_csv(path, *, fdr_col="fdr_dev", ax=None, **kwargs):
-    """Read an H-Pathway Summary grid CSV and draw the H-Pathway Summary dotplot.
+def hpathway_summary_from_csv(path, *, fdr_col=None, **kwargs):
+    """Read a saved (pathway x layer) grid and draw the H-Pathway Summary.
 
-    The CSV is a tidy ``(pathway x layer)`` grid with ``pathway``, ``layer``,
-    ``score`` and one or more FDR columns (``fdr_dev``, ``fdr_contrast``,
-    ``fdr_treatment``, ``fdr_strata4``); ``fdr_col`` selects which one drives
-    the dot alpha and rings. Extra keyword arguments are forwarded to
-    :func:`hplot.plotting.plot_hpathway_dotplot`.
-
-    Returns the dict from :func:`hplot.plotting.plot_hpathway_dotplot`.
+    ``fdr_col`` defaults to ``None`` (position-only panel), which is the right
+    reading when the pathway list was fixed elsewhere: pass the column name only
+    when the grid carries a genuine competitive significance channel.
     """
     import pandas as pd
 
-    grid_df = pd.read_csv(path)
-    return plot_hpathway_dotplot(grid_df, fdr_col=fdr_col, ax=ax, **kwargs)
+    return plot_hpathway_dotplot(pd.read_csv(path), fdr_col=fdr_col, **kwargs)
+
+

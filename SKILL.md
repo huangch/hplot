@@ -366,35 +366,30 @@ panel_genes = set(adata.var_names)
 sig_filtered, coverage = hplot.select_signatures_on_panel(
     signatures, panel_genes, mode="discovery", min_panel_genes=5)
 
-# 3) Profile signatures across border layers (UCell scoring happens inside).
-#    `sample` is a scalar label attached to every row of this slide's profile.
-profiles = hplot.pathway_layer_profile(
-    adata.X, layers=adata.obs["hplot_layer"].values,
-    signatures=sig_filtered, var_names=list(adata.var_names),
-    sample="slide_01", extra={"hpv": "HPV+"},
+# 3) Test each signature against the gene-level screen, layer by layer.
+#    `gene_bands` is the per-gene band table from gradient_cluster_mass_screen():
+#    gene, band_lo, band_hi and an FDR column. Its rows are the universe, so each
+#    layer is judged against the rate at which the panel itself is banded there.
+grid_df, summary = hplot.hpathway_layer_ora(
+    gene_bands, sig_filtered, grid=range(-6, 13),
+    fdr_col="fdr_global", alpha=0.05, min_genes=5, min_run=2,
 )
 
-# 4) Build the (pathway x layer) grid with FDR columns.
-#    Each contrast is {name: (group_col, groups)} and yields p_/fdr_/dir_<name>.
-grid_df = hplot.hpathway_summary_grid(
-    profiles, path_names=list(sig_filtered), grid=range(-6, 13),
-    deviation="far",
-    contrasts={"contrast": ("hpv", ("HPV+", "Rest"))},
-)
-
-# 5) Render the H-Pathway Summary dotplot
+# 4) Render the dotplot. Over-representation counts genes and has no direction,
+#    so no direction column is passed.
 out = hplot.plot_hpathway_dotplot(
-    grid_df,
-    direction_col="dir_contrast",      # signed column for colour
-    fdr_col="fdr_contrast",            # FDR column for opacity + significance ring
-    select_fdr_below=0.1,              # only show significant pathways
-    max_rows=30,
+    grid_df, score_col="enrichment", fdr_col="q",
+    select_fdr_below=None, max_rows=30,
 )
 ```
 
-`ucell_scores()` is available when you want per-cell scores directly, but it
-takes **integer column indices**, not gene symbols — `pathway_layer_profile()`
-resolves symbols for you.
+**There is no pathway-score channel, by design.** Scoring a signature per cell,
+averaging per layer and testing that average against its own baseline is a
+*self-contained* test, and on a targeted panel it calls almost every signature
+significant -- random level-matched gene sets included -- because a tissue-wide
+gradient acts on every gene. `hpathway_layer_ora()` counts genes the per-gene
+screen already tested against a patient-level permutation null;
+`pathway_competitive_test()` is the pooled counterpart.
 
 #### Signature catalogs
 
@@ -547,7 +542,7 @@ python run_hplot.py \
 | `gradient_cluster_mass_screen()` | Multi-feature gradient screen |
 | `directional_cluster_bands()` | Extract directional cluster bands |
 | `deviation_tensor()` | Per-layer deviation tensor |
-| `hpathway_summary_grid()` | Build (pathway x layer) grid |
+| `hpathway_layer_ora()` | Per-layer over-representation vs the gene screen |
 | `benjamini_hochberg()` | FDR correction |
 | `binarize()` | Binarize continuous variable |
 
@@ -564,10 +559,6 @@ python run_hplot.py \
 
 | Function | Purpose |
 |----------|---------|
-| `ucell_scores()` | Per-cell UCell signature scores |
-| `pathway_layer_profile()` | Per-layer pathway profile |
-| `pathway_layer_profile_adata()` | Profile from AnnData |
-| `pathway_layer_profile_h5ad()` | Profile from H5AD file |
 
 ### Geometry functions
 
@@ -580,7 +571,7 @@ python run_hplot.py \
 | Module | Functions |
 |--------|-----------|
 | `hplot.pp` | `border_layers()` |
-| `hplot.tl` | `hplot()`, `ucell_scores()`, `pathway_layer_profile()` |
+| `hplot.tl` | `hplot()` |
 | `hplot.pl` | `hplot()`, `hplot_from_csv()` |
 | `hplot.io` | `read_hplot_csv()` |
 

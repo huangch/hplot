@@ -5,11 +5,69 @@ still runs with only the hard dependencies present.
 """
 
 import os
+import pathlib
 import sys
 
 import numpy as np
 import pandas as pd
-import pytest
+
+try:
+    import pytest
+except ModuleNotFoundError:  # noqa: F401
+    # Minimal stand-in so this file runs under plain `python` too. The suite has no
+    # pytest dependency and these 15 tests are the only coverage of the pp/tl/pl/io
+    # AnnData API, so they must not silently not-run.
+    import contextlib
+    import importlib
+    import types
+
+    class _Skipped(Exception):
+        pass
+
+    def _fixture(fn=None, **_kw):
+        def deco(f):
+            f._hplot_fixture = True
+            return f
+        return deco(fn) if callable(fn) else deco
+
+    @contextlib.contextmanager
+    def _raises(exc, **_kw):
+        try:
+            yield
+        except exc:
+            return
+        raise AssertionError(f"{getattr(exc, '__name__', exc)} was not raised")
+
+    def _skip(reason=""):
+        raise _Skipped(reason)
+
+    def _importorskip(name, **_kw):
+        try:
+            return importlib.import_module(name)
+        except ModuleNotFoundError:
+            raise _Skipped(f"{name} not installed")
+
+    class _Approx:
+        """`value == approx(expected)` for scalars and sequences."""
+
+        def __init__(self, expected, rel=1e-6, abs=1e-12):
+            self.expected, self.rel, self.abs = expected, rel, abs
+
+        def __eq__(self, other):
+            import math
+            exp = self.expected
+            if isinstance(exp, (list, tuple)):
+                return (len(exp) == len(other)
+                        and all(math.isclose(a, b, rel_tol=self.rel, abs_tol=self.abs)
+                                for a, b in zip(other, exp)))
+            return math.isclose(other, exp, rel_tol=self.rel, abs_tol=self.abs)
+
+        def __repr__(self):
+            return f"approx({self.expected!r})"
+
+    pytest = types.SimpleNamespace(fixture=_fixture, raises=_raises, skip=_skip,
+                                   importorskip=_importorskip, approx=_Approx,
+                                   Skipped=_Skipped)
 
 # Ensure the package can be imported without installation.
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -243,3 +301,48 @@ def test_read_hplot_csv_and_plot(tmp_path):
     assert {"layer", "mean", "distance", "ci_lower", "ci_upper", "n"} <= cols
     ax = hplot.pl.hplot_from_csv(csv)
     assert ax.__class__.__name__ == "Axes"
+
+
+if __name__ == "__main__":
+    # Run the pytest-style tests without pytest: build the `adata` fixture fresh per
+    # test and hand out a temporary directory for `tmp_path`.
+    import inspect
+    import tempfile
+    import traceback
+
+    _skipped_exc = getattr(pytest, "Skipped", ())
+    _tests = [(n, f) for n, f in sorted(globals().items())
+              if n.startswith("test_") and callable(f)]
+    _fail = _skip = 0
+    for _name, _fn in _tests:
+        _args = {}
+        try:
+            for _p in inspect.signature(_fn).parameters:
+                if _p == "adata":
+                    _args[_p] = adata() if not hasattr(adata, "__wrapped__") \
+                        else adata.__wrapped__()
+                elif _p in ("tmp_path", "tmpdir"):
+                    _args[_p] = None            # filled in below
+                else:
+                    raise RuntimeError(f"unknown fixture {_p!r} for {_name}")
+            if any(v is None for v in _args.values()):
+                with tempfile.TemporaryDirectory() as _td:
+                    for _k, _v in list(_args.items()):
+                        if _v is None:
+                            _args[_k] = pathlib.Path(_td)
+                    _fn(**_args)
+            else:
+                _fn(**_args)
+        except _skipped_exc as exc:            # type: ignore[misc]
+            print(f"  SKIP {_name}: {exc}")
+            _skip += 1
+        except Exception:
+            print(f"  FAIL {_name}")
+            traceback.print_exc()
+            _fail += 1
+        else:
+            print(f"  ok   {_name}")
+    print(f"\n{len(_tests) - _fail - _skip}/{len(_tests)} passed"
+          f"{f', {_skip} skipped' if _skip else ''}"
+          f"{f', {_fail} FAILED' if _fail else ''}")
+    raise SystemExit(1 if _fail else 0)

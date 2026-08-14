@@ -7,7 +7,7 @@ from matplotlib.ticker import MaxNLocator, FuncFormatter
 # Column geometry of the H-Pathway colour-key row, as a fraction of the key
 # axes. Shared by the layout pass (which fits the column titles to this width)
 # and the drawing pass.
-_KEY_CB_W, _KEY_GAP = 0.18, 0.04
+_KEY_CB_W, _KEY_GAP = 0.18, 0.10
 
 # Phrasing templates for the y-axis label, keyed by the kind of quantity the
 # H-plot is showing. The y-value is always a per-layer summary, but its meaning
@@ -1890,21 +1890,28 @@ def plot_hpathway_dotplot(
     path_col="pathway",
     layer_col="layer",
     fdr_threshold=0.05,
+    fdr_label=None,
     select_fdr_below=None,
     max_rows=40,
     layer_limits=None,
     layer_to_distance=None,
     size_range=(12.0, 400.0),
+    size_mode="row",
+    size_vmin=None,
+    size_vmax=None,
     side_colorbar=True,
     cell_in=0.30,
     alpha_range=(0.25, 1.0),
     neglog_fdr_cap=3.0,
     order_by_peak=True,
+    order_by="peak",
+    order_shrink=0.25,
+    row_order=None,
     direction_col=None,
     direction_labels=None,
     elevated_color="#d62728",
     depressed_color="#1f77b4",
-    nodir_color="0.7",
+    nodir_color="#d62728",
     direction_alpha=0.9,
     ax=None,
     title=None,
@@ -1980,8 +1987,18 @@ def plot_hpathway_dotplot(
     from matplotlib.colors import Normalize
     from matplotlib.cm import ScalarMappable
 
+    # The significance channel is not always an FDR: a permutation p or an uncorrected
+    # per-cell p is legitimate here provided the legend says so rather than implying a
+    # correction that was never applied.
+    _sig_name = fdr_label if fdr_label else "FDR"
+
     piv_s = grid_df.pivot(index=path_col, columns=layer_col, values=score_col)
-    piv_f = grid_df.pivot(index=path_col, columns=layer_col, values=fdr_col)
+    _has_fdr = fdr_col is not None
+    if _has_fdr:
+        piv_f = grid_df.pivot(index=path_col, columns=layer_col, values=fdr_col)
+    else:
+        piv_f = piv_s.copy()
+        piv_f[:] = np.nan
     layers = np.array(sorted(piv_s.columns))
     if layer_limits is not None:
         layers = layers[(layers >= layer_limits[0]) & (layers <= layer_limits[1])]
@@ -1990,15 +2007,22 @@ def plot_hpathway_dotplot(
 
     # ---- auto-selection: keep pathways significant in >= 1 shown layer ----
     if select_fdr_below is not None:
+        if not _has_fdr:
+            raise ValueError("select_fdr_below needs an fdr_col; got fdr_col=None.")
         keep = [p for p in piv_f.index
                 if np.isfinite(piv_f.loc[p].to_numpy(dtype=float)).any()
                 and np.nanmin(piv_f.loc[p].to_numpy(dtype=float)) < select_fdr_below]
         piv_s = piv_s.loc[keep]
         piv_f = piv_f.loc[keep]
-    # cap rows (best min-FDR first) so a big discovery stays readable
+    # cap rows so a big discovery stays readable: best min-FDR first when there is
+    # an FDR channel, else the strongest rows by peak score
     if max_rows is not None and len(piv_s.index) > max_rows:
-        best = {p: np.nanmin(piv_f.loc[p].to_numpy(dtype=float)) for p in piv_f.index}
-        order = sorted(piv_f.index, key=lambda p: best[p])[:max_rows]
+        if _has_fdr:
+            best = {p: np.nanmin(piv_f.loc[p].to_numpy(dtype=float)) for p in piv_f.index}
+            order = sorted(piv_f.index, key=lambda p: best[p])[:max_rows]
+        else:
+            peak = {p: np.nanmax(piv_s.loc[p].to_numpy(dtype=float)) for p in piv_s.index}
+            order = sorted(piv_s.index, key=lambda p: -peak[p])[:max_rows]
         piv_s = piv_s.loc[order]
         piv_f = piv_f.loc[order]
 
@@ -2008,11 +2032,47 @@ def plot_hpathway_dotplot(
               f"(FDR < {select_fdr_below}); nothing to plot.")
         return None
     if order_by_peak:
-        # y increases upward, so an ascending sort renders top -> bottom in
-        # descending peak-layer position.
-        peak = {p: _hpathway_cluster_mass_peak(piv_s.loc[p].to_numpy(dtype=float), layers)
-                for p in paths}
-        paths = sorted(paths, key=lambda p: peak[p])
+        # Ordering keys off the column actually drawn, so the sort the reader infers from
+        # dot size is the sort that was applied. "centroid" is the mass-weighted mean
+        # layer: continuous, so rows spread smoothly instead of piling onto the handful
+        # of layers that happen to win an argmax.
+        if str(order_by) == "centroid":
+            _w_all, _cen_all = {}, {}
+            for p in paths:
+                v = piv_s.loc[p].to_numpy(dtype=float)
+                w = np.where(np.isfinite(v), v, np.nan)
+                w = w - np.nanmin(w)
+                w = np.where(np.isfinite(w) & (w > 0), w, 0.0)
+                _w_all[p] = float(np.sum(w))
+                _cen_all[p] = (float(np.sum(w * layers) / np.sum(w))
+                               if np.sum(w) > 0 else float(np.mean(layers)))
+            # A row with almost no drawn signal still has a centroid, but it is set by
+            # noise -- and would otherwise let an empty row claim the top of the panel.
+            # Shrink toward the panel's median centroid with a weight of `order_shrink`
+            # x the median row mass: rows carrying real signal barely move, empty ones
+            # collapse to the middle of the ordering where they make no spatial claim.
+            # The neutral point is the median centroid rather than the axis midpoint,
+            # which on an asymmetric window (e.g. -5..+15) is itself an extreme position.
+            _mid = float(np.median(list(_cen_all.values()) or [0.0]))
+            _k = float(order_shrink) * float(np.median(list(_w_all.values()) or [0.0]))
+
+            def _key(p):
+                m = _w_all[p]
+                return (m * _cen_all[p] + _k * _mid) / (m + _k) if (m + _k) > 0 else _mid
+        elif str(order_by) == "peak":
+            def _key(p):
+                return _hpathway_cluster_mass_peak(
+                    piv_s.loc[p].to_numpy(dtype=float), layers)
+        else:
+            raise ValueError(f"order_by must be 'peak' or 'centroid'; got {order_by!r}.")
+        # y increases upward, so an ascending sort renders bottom -> top as inner -> outer.
+        paths = sorted(paths, key=_key)
+    if row_order is not None:
+        # An explicit order lets the caller rank rows on a quantity the panel does not
+        # carry -- e.g. a peak read off the chance-standardised profile rather than the
+        # raw one that is drawn.
+        _want = [p for p in row_order if p in set(paths)]
+        paths = _want + [p for p in paths if p not in set(_want)]
     piv_s = piv_s.reindex(index=paths)
     piv_f = piv_f.reindex(index=paths)
 
@@ -2027,11 +2087,23 @@ def plot_hpathway_dotplot(
 
     # Row-relative sizing: normalize each pathway row to [0, 1] independently so
     # within-pathway layer differences span the full size range.
-    row_lo = np.nanmin(S, axis=1, keepdims=True)
-    row_hi = np.nanmax(S, axis=1, keepdims=True)
-    row_span = row_hi - row_lo
-    S_relative = np.divide(S - row_lo, row_span, out=np.full_like(S, 0.5),
-                           where=row_span > 1e-9)
+    if str(size_mode) == "absolute":
+        # Dot area means the same thing in every row -- required when the score is
+        # already expressed in units of chance (e.g. ratio_vs_null), where a value of
+        # 3 in one row and 1.2 in another must not render identically.
+        _lo = float(np.nanmin(S)) if size_vmin is None else float(size_vmin)
+        _hi = float(np.nanmax(S)) if size_vmax is None else float(size_vmax)
+        if not np.isfinite(_lo) or not np.isfinite(_hi) or _hi <= _lo:
+            _hi = _lo + 1.0
+        S_relative = np.clip((S - _lo) / (_hi - _lo), 0.0, 1.0)
+    elif str(size_mode) == "row":
+        row_lo = np.nanmin(S, axis=1, keepdims=True)
+        row_hi = np.nanmax(S, axis=1, keepdims=True)
+        row_span = row_hi - row_lo
+        S_relative = np.divide(S - row_lo, row_span, out=np.full_like(S, 0.5),
+                               where=row_span > 1e-9)
+    else:
+        raise ValueError(f"size_mode must be 'row' or 'absolute'; got {size_mode!r}.")
 
     xs, ys, sizes, alphas, rings = [], [], [], [], []
     dirs = []
@@ -2043,7 +2115,9 @@ def plot_hpathway_dotplot(
             ys.append(iy)
             sizes.append(np.interp(S_relative[iy, ix], (0.0, 1.0), size_range))
             fv = F[iy, ix]
-            if np.isfinite(fv) and fv > 0:
+            if not _has_fdr:
+                a = alpha_range[1]
+            elif np.isfinite(fv) and fv > 0:
                 a = np.interp(-np.log10(fv), (0.0, neglog_fdr_cap), alpha_range)
             else:
                 a = alpha_range[0]
@@ -2123,7 +2197,9 @@ def plot_hpathway_dotplot(
     if D is not None:
         _el_rgb = matplotlib.colors.to_rgb(elevated_color)
         _de_rgb = matplotlib.colors.to_rgb(depressed_color)
-        _nd_rgb = matplotlib.colors.to_rgb(nodir_color)
+        # in direction mode a cell with no signed direction is ambiguous, not
+        # "directionless", so it stays grey whatever `nodir_color` is set to
+        _nd_rgb = matplotlib.colors.to_rgb("0.7")
         for _k in range(len(xs)):
             _d = _dr[_k]
             if np.isfinite(_d) and _d > 0:
@@ -2230,7 +2306,44 @@ def plot_hpathway_dotplot(
     # opacity ramp, (3) ring note. No-direction mode shows a single neutral
     # opacity ramp. When no colour-key row is available (external ax /
     # side_colorbar=False) a discrete right-side legend is the fallback.
-    if ax_cbar is not None and D is not None:
+    if ax_cbar is not None and not _has_fdr:
+        # no significance channel at all: size is the only encoded quantity, so the
+        # strip must not imply an FDR ramp or a ring that is never drawn.
+        _sz_x0, _sz_step = 0.34, 0.09
+        if str(size_mode) == "absolute":
+            _lo = float(np.nanmin(S)) if size_vmin is None else float(size_vmin)
+            _hi = float(np.nanmax(S)) if size_vmax is None else float(size_vmax)
+            _vals = [0.0, 0.5, 1.0]
+            _labs = [f"{_lo + v * (_hi - _lo):.3g}" for v in _vals]
+            _cap = "size = score (absolute)  \u00b7  no significance channel"
+        else:
+            _vals, _labs = [0.0, 0.5, 1.0], ["0", "0.5", "1"]
+            _cap = "size = row-relative score  \u00b7  no significance channel"
+        for _k, (_v, _lbl) in enumerate(zip(_vals, _labs)):
+            _ms = np.sqrt(np.interp(_v, (0.0, 1.0), size_range))
+            _x = _sz_x0 + _sz_step * _k
+            ax_cbar.plot(_x, 0.64, "o", color=nodir_color, markersize=_ms,
+                         transform=ax_cbar.transAxes, clip_on=False)
+            ax_cbar.text(_x, 0.24, _lbl, transform=ax_cbar.transAxes, ha="center",
+                         va="bottom", fontsize=9.0, color="0.35", clip_on=False)
+        ax_cbar.text(0.5, 0.86, _cap,
+                     transform=ax_cbar.transAxes, ha="center", va="bottom",
+                     fontsize=10.5, color="0.35")
+        # A group contrast still has a legitimate side (which arm is higher), so the
+        # colours are named even though there is no significance channel.
+        if D is not None:
+            if direction_labels and len(direction_labels) == 2:
+                _dn_lbl, _up_lbl = direction_labels
+            else:
+                _dn_lbl, _up_lbl = "depressed", "elevated"
+            for _k, (_c, _lbl) in enumerate(((elevated_color, _up_lbl),
+                                             (depressed_color, _dn_lbl))):
+                _x = 0.62 + 0.19 * _k
+                ax_cbar.plot(_x, 0.64, "o", color=_c, markersize=np.sqrt(size_range[1]),
+                             transform=ax_cbar.transAxes, clip_on=False)
+                ax_cbar.text(_x, 0.24, _lbl, transform=ax_cbar.transAxes, ha="center",
+                             va="bottom", fontsize=8.5, color=_c, clip_on=False)
+    elif ax_cbar is not None:
         # direction mode: full legend strip with size gradient and two colored
         # alpha-ramp colorbars (elevated = red, depressed = blue)
         _norm = Normalize(vmin=0.0, vmax=neglog_fdr_cap)
@@ -2246,57 +2359,81 @@ def plot_hpathway_dotplot(
         _fs_num = 9.0
         _fs_tick = 9.0
 
-        # (1) dot-size legend: 5 reference dots at row-relative = 0, 0.25, 0.5, 0.75, 1.0
+        # (1) dot-size legend. Spacing is set by whichever is wider, the largest
+        # marker or its label, so the numbers cannot run together when size_range
+        # or the panel width changes.
         _sz_x0 = 0.02
-        _sz_vals = [0.0, 0.25, 0.5, 0.75, 1.0]
-        _sz_labels = ["0", "0.25", "0.5", "0.75", "1"]
+        _sz_vals = [0.0, 0.5, 1.0]
+        if str(size_mode) == "absolute":
+            _s_lo = float(np.nanmin(S)) if size_vmin is None else float(size_vmin)
+            _s_hi = float(np.nanmax(S)) if size_vmax is None else float(size_vmax)
+            _sz_labels = [f"{_s_lo + v * (_s_hi - _s_lo):.3g}" for v in _sz_vals]
+            _sz_title = "score"
+        else:
+            _sz_labels = ["0", "0.5", "1"]
+            _sz_title = "relative score"
+        _key_w_in = ax_cbar.get_position().width * fig.get_figwidth()
+        _step = (max(np.sqrt(size_range[1]),
+                     _fs_num * 0.60 * max(len(_l) for _l in _sz_labels))
+                 * 1.3 / 72.0) / max(_key_w_in, 1e-6)
+        # Fit the key columns (sizes, one ramp per direction PRESENT, ring) inside the
+        # strip. The size spacing gives way first, then the ramp width, so the columns
+        # cannot collide however size_range and the panel width are set.
+        _ramps = [(_c, _lab) for _present, _c, _lab in
+                  ((D is not None and bool(np.any(D > 0)), elevated_color, _up_short),
+                   (D is not None and bool(np.any(D < 0)), depressed_color, _dn_short))
+                  if _present]
+        if not _ramps:                      # no direction to encode: one neutral ramp,
+            _ramps = [(nodir_color, "")]    # named by its own caption below
+        _n_ramp = len(_ramps)
+        _cb_w, _gap, _ring_w = _KEY_CB_W, _KEY_GAP, 0.10
+        # The strip is laid out left-aligned, so any width left over would otherwise sit
+        # as dead space after the ring column; spend it on the gaps instead.
+        _avail = 0.98 - _sz_x0
+        _need = 2 * _step + _n_ramp * _cb_w + (_n_ramp + 1) * _gap + _ring_w
+        _over = _need - _avail
+        if _over > 0:
+            _step = max(0.030, _step - _over / 2.0)
+            _over = (2 * _step + _n_ramp * _cb_w + (_n_ramp + 1) * _gap + _ring_w) - _avail
+        if _over > 0:
+            _cb_w = max(0.10, _cb_w - _over / max(_n_ramp, 1))
+        else:
+            _gap += (-_over) / (_n_ramp + 2)
         for _k, (_v, _lbl) in enumerate(zip(_sz_vals, _sz_labels)):
             _ms = np.sqrt(np.interp(_v, (0.0, 1.0), size_range))  # marker size in points
-            _x = _sz_x0 + 0.028 * _k
+            _x = _sz_x0 + _step * _k
             ax_cbar.plot(_x, 0.64, "o", color="0.5", markersize=_ms, transform=ax_cbar.transAxes,
                          clip_on=False)
             ax_cbar.text(_x, _bot_y, _lbl, transform=ax_cbar.transAxes, ha="center", va="bottom",
                          fontsize=_fs_num, color="0.35", clip_on=False)
-        ax_cbar.text(_sz_x0 + 0.056, _lab_y, "relative score", transform=ax_cbar.transAxes,
+        ax_cbar.text(_sz_x0 + _step, _lab_y, _sz_title, transform=ax_cbar.transAxes,
                      ha="center", va="bottom", fontsize=_fs_title, color="0.25", clip_on=False)
 
-        # (2) two side-by-side alpha-ramp colorbars: elevated (red) and depressed (blue)
-        # Each shows the actual dot color with opacity ramping by -log10 FDR
-        _cb_w = _KEY_CB_W
-        _gap = _KEY_GAP
-        # elevated (red) colorbar
-        _cb_x0_up = 0.22
-        _cax_up = ax_cbar.inset_axes([_cb_x0_up, _yy, _cb_w, _sh])
-        _sm_up = ScalarMappable(norm=_norm, cmap=_alpha_ramp_cmap(
-            elevated_color, alpha_range[0], alpha_range[1]))
-        _sm_up.set_array([])
-        _cb_up = fig.colorbar(_sm_up, cax=_cax_up, orientation="horizontal")
-        _cb_up.ax.xaxis.set_ticks_position("bottom")
-        _cb_up.ax.tick_params(labelsize=_fs_tick, length=2, pad=1)
-        _cb_up.set_ticks([0, 1, 2, 3])
-        ax_cbar.text(_cb_x0_up + _cb_w / 2, _lab_y, _up_short, transform=ax_cbar.transAxes,
-                     ha="center", va="bottom", fontsize=_fs_title, color="0.25", clip_on=False)
+        # (2) one alpha-ramp colorbar per direction actually drawn, so a single-direction
+        # panel does not carry a ramp for a colour that never appears on it.
+        _cb_x0 = _sz_x0 + 2 * _step + _gap
+        for _ri, (_rc, _rlab) in enumerate(_ramps):
+            _x0r = _cb_x0 + _ri * (_cb_w + _gap)
+            _caxr = ax_cbar.inset_axes([_x0r, _yy, _cb_w, _sh])
+            _smr = ScalarMappable(norm=_norm, cmap=_alpha_ramp_cmap(
+                _rc, alpha_range[0], alpha_range[1]))
+            _smr.set_array([])
+            _cbr = fig.colorbar(_smr, cax=_caxr, orientation="horizontal")
+            _cbr.ax.xaxis.set_ticks_position("bottom")
+            _cbr.ax.tick_params(labelsize=_fs_tick, length=2, pad=1)
+            _cbr.set_ticks([0, 1, 2, 3])
+            ax_cbar.text(_x0r + _cb_w / 2, _lab_y, _rlab, transform=ax_cbar.transAxes,
+                         ha="center", va="bottom", fontsize=_fs_title, color="0.25",
+                         clip_on=False)
+        _cb_end = _cb_x0 + _n_ramp * _cb_w + (_n_ramp - 1) * _gap
 
-        # depressed (blue) colorbar
-        _cb_x0_dn = _cb_x0_up + _cb_w + _gap
-        _cax_dn = ax_cbar.inset_axes([_cb_x0_dn, _yy, _cb_w, _sh])
-        _sm_dn = ScalarMappable(norm=_norm, cmap=_alpha_ramp_cmap(
-            depressed_color, alpha_range[0], alpha_range[1]))
-        _sm_dn.set_array([])
-        _cb_dn = fig.colorbar(_sm_dn, cax=_cax_dn, orientation="horizontal")
-        _cb_dn.ax.xaxis.set_ticks_position("bottom")
-        _cb_dn.ax.tick_params(labelsize=_fs_tick, length=2, pad=1)
-        _cb_dn.set_ticks([0, 1, 2, 3])
-        ax_cbar.text(_cb_x0_dn + _cb_w / 2, _lab_y, _dn_short, transform=ax_cbar.transAxes,
-                     ha="center", va="bottom", fontsize=_fs_title, color="0.25", clip_on=False)
-
-        # shared -log10 FDR label below both colorbars (aligned with the size numbers)
-        ax_cbar.text((_cb_x0_up + _cb_x0_dn + _cb_w) / 2, _bot_y,
-                     r"$-\log_{10}$ FDR  (opacity)", transform=ax_cbar.transAxes,
+        # shared -log10 FDR label below the ramps (aligned with the size numbers)
+        ax_cbar.text((_cb_x0 + _cb_end) / 2, _bot_y,
+                     rf"$-\log_{{10}}$ {_sig_name}  (opacity)", transform=ax_cbar.transAxes,
                      ha="center", va="bottom", fontsize=_fs_num, color="0.35", clip_on=False)
 
         # (3) ring = FDR < threshold: an OPEN ringed dot (no fill), matching the size legend
-        _ring_x = 0.82
+        _ring_x = _cb_end + _gap + _ring_w / 2
         ax_cbar.text(_ring_x, _lab_y, "significance", transform=ax_cbar.transAxes,
                      ha="center", va="bottom", fontsize=_fs_title, color="0.25", clip_on=False)
         # markersize matches the "1" dot in the size legend
@@ -2304,7 +2441,8 @@ def plot_hpathway_dotplot(
         ax_cbar.plot(_ring_x, 0.64, "o", markerfacecolor="none", markeredgecolor="k",
                      markeredgewidth=1.2, markersize=_ring_ms, transform=ax_cbar.transAxes,
                      clip_on=False)
-        ax_cbar.text(_ring_x, _bot_y, f"FDR < {fdr_threshold:g}", transform=ax_cbar.transAxes,
+        ax_cbar.text(_ring_x, _bot_y, f"{_sig_name} < {fdr_threshold:g}",
+                     transform=ax_cbar.transAxes,
                      ha="center", va="bottom", fontsize=_fs_num, color="0.3", clip_on=False)
     elif ax_cbar is not None:
         # no direction: a single neutral opacity ramp (alpha = -log10 FDR); no

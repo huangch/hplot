@@ -37,10 +37,16 @@ from .stats import (
     gradient_cluster_mass_screen,
     deviation_tensor,
     benjamini_hochberg,
-    hpathway_summary_grid,
     pathway_competitive_test,
+    hpathway_layer_ora,
+    hpathway_score_grid,
+    hpathway_arm_contrast,
 )
-from .tl import ucell_scores, pathway_layer_profile, pathway_layer_profile_adata, pathway_layer_profile_h5ad
+from .pathways import (
+    ucell_scores,
+    pathway_layer_profile,
+    pathway_layer_profile_h5ad,
+)
 from ._geometry import border_layers_from_coords
 from .catalogs import (
     load_catalog,
@@ -75,11 +81,12 @@ __all__ = [
     "gradient_cluster_mass_screen",
     "deviation_tensor",
     "benjamini_hochberg",
-    "hpathway_summary_grid",
     "pathway_competitive_test",
+    "hpathway_layer_ora",
+    "hpathway_score_grid",
+    "hpathway_arm_contrast",
     "ucell_scores",
     "pathway_layer_profile",
-    "pathway_layer_profile_adata",
     "pathway_layer_profile_h5ad",
     "border_layers_from_coords",
     "load_catalog",

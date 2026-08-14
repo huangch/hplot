@@ -762,35 +762,32 @@ panel_genes = set(adata.var_names)
 sig_filtered, coverage = hplot.select_signatures_on_panel(
     signatures, panel_genes, mode="discovery", min_panel_genes=5)
 
-# 3) Profile signatures across border layers (UCell scoring happens inside).
-#    `sample` is a scalar label attached to every row of this slide's profile.
-profiles = hplot.pathway_layer_profile(
-    adata.X, layers=adata.obs["hplot_layer"].values,
-    signatures=sig_filtered, var_names=list(adata.var_names),
-    sample="slide_01", extra={"hpv": "HPV+"},
+# 3) Test each signature against the gene-level screen, layer by layer.
+#    `gene_bands` is the per-gene band table from gradient_cluster_mass_screen():
+#    gene, band_lo, band_hi and an FDR column. The universe is its rows, so the
+#    background is the rate at which the measured panel itself is banded there.
+grid_df, summary = hplot.hpathway_layer_ora(
+    gene_bands, sig_filtered, grid=range(-6, 13),
+    fdr_col="fdr_global", alpha=0.05, min_genes=5, min_run=2,
 )
 
-# 4) Build the (pathway x layer) grid with FDR columns.
-#    Each contrast is {name: (group_col, groups)} and yields p_/fdr_/dir_<name>.
-grid_df = hplot.hpathway_summary_grid(
-    profiles, path_names=list(sig_filtered), grid=range(-6, 13),
-    deviation="far",
-    contrasts={"contrast": ("hpv", ("HPV+", "Rest"))},
-)
-
-# 5) Render the H-Pathway Summary dotplot
+# 4) Render the dotplot. Over-representation counts genes and has no direction,
+#    so no direction column is passed.
 out = hplot.plot_hpathway_dotplot(
-    grid_df,
-    direction_col="dir_contrast",      # signed column for colour
-    fdr_col="fdr_contrast",            # FDR column for opacity + significance ring
-    select_fdr_below=0.1,              # only show significant pathways
-    max_rows=30,
+    grid_df, score_col="enrichment", fdr_col="q",
+    select_fdr_below=None, max_rows=30,
 )
 ```
 
-`ucell_scores()` is available directly when you want the per-cell scores rather
-than a layer profile, but note it takes **integer column indices**, not gene
-symbols — `pathway_layer_profile()` does that resolution for you.
+**There is no pathway-score channel, by design.** Scoring each signature per cell,
+averaging per layer and testing that average against its own baseline is a
+*self-contained* test: on a targeted panel it calls almost every signature
+significant, including random level-matched gene sets, because a tissue-wide
+gradient acts on every gene. `hpathway_layer_ora()` instead counts genes that the
+per-gene screen already tested against a patient-level permutation null, which is
+the standard over-representation design. `pathway_competitive_test()` is the
+pooled counterpart.
+
 
 ### Signature catalogs
 
@@ -811,25 +808,13 @@ filtered, coverage = hplot.select_signatures_on_panel(
     signatures, panel_genes, mode="discovery", min_panel_genes=5)
 ```
 
-### UCell scoring
-
-`ucell_scores()` implements the UCell algorithm (rank-based signature scoring)
-with memory-efficient chunking. It processes cells in blocks, computes the rank
-matrix once per chunk, and scores all signatures in a single pass.
-
-```python
-# X: sparse or dense (n_cells x n_genes), sig_idx: {name: [gene_indices]}
-scores = hplot.ucell_scores(X, sig_idx, max_rank=1500, chunk=20000)
-# Returns {name: ndarray[float32] of shape (n_cells,)}
-```
-
 ### `plot_hpathway_dotplot()` parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `grid_df` | — | Tidy (pathway x layer) DataFrame with score and FDR columns. |
 | `score_col` | `"score"` | Column for the row-relative score (dot size). |
-| `fdr_col` | `"fdr_dev"` | Column for FDR (dot opacity + significance ring). |
+| `fdr_col` | `"fdr_dev"` | Column for FDR (dot opacity + significance ring). Use `"q"` with `hpathway_layer_ora()` output. |
 | `path_col` | `"pathway"` | Column identifying each pathway/signature. |
 | `layer_col` | `"layer"` | Column for signed border layer. |
 | `fdr_threshold` | `0.05` | FDR below which a black ring marks the dot. |
@@ -847,26 +832,6 @@ scores = hplot.ucell_scores(X, sig_idx, max_rank=1500, chunk=20000)
 | `layer_to_distance` | `None` | Optional µm axis from `build_layer_distance_map()`. |
 | `order_by_peak` | `True` | Order rows by cluster-mass peak layer. |
 | `savepath` | `None` | Save figure (PNG + SVG) to this path. |
-
-### AnnData shortcuts
-
-For AnnData workflows, use the convenience functions that handle layer extraction:
-
-```python
-# Profile directly from AnnData. `base_col` is required: it names the boolean
-# obs column marking the base (e.g. malignant) compartment. Border layers are
-# computed internally from `spatial_key`.
-profiles = hplot.pathway_layer_profile_adata(
-    adata, signatures, base_col="cancer_associated",
-    spatial_key="spatial", sample="slide_01",
-)
-
-# Or from a saved H5AD file (lazy loading, optional on-disk cache)
-profiles = hplot.pathway_layer_profile_h5ad(
-    "run_dir", signatures, base_col="cancer_associated",
-    h5ad_name="annotated.h5ad", sample="slide_01", cache_path="slide_01.joblib",
-)
-```
 
 ---
 
@@ -986,7 +951,7 @@ hplot/
   stats.py     — compute_layer_stats(), compute_layer_pvalues(),
                  gam_group_curves(), gam_delta_curve(), gam_pooled_effect(),
                  cluster_mass_screen(), gradient_cluster_mass_screen(),
-                 directional_cluster_bands(), hpathway_summary_grid(),
+                 directional_cluster_bands(), hpathway_layer_ora(),
                  deviation_tensor(), benjamini_hochberg()
   catalogs.py  — load_catalog(), read_gmt(), write_gmt(),
                  select_signatures_on_panel() — signature/pathway catalogs
@@ -994,8 +959,7 @@ hplot/
   runners.py   — run_hplot_batch() batch helper
   cli.py       — argparse CLI (hplot plot / test / gam / screen / loci)
   pp.py        — AnnData preprocessing: border_layers()
-  tl.py        — AnnData tool: hplot(), ucell_scores(), pathway_layer_profile(),
-                 pathway_layer_profile_adata(), pathway_layer_profile_h5ad()
+  tl.py        — AnnData tool: hplot()
   pl.py        — AnnData plotting: hplot(), hplot_from_csv()
   io.py        — read_hplot_csv() CSV bridge
   _geometry.py — pure numpy/scipy border-layer geometry (Delaunay, k-hop, BFS);
