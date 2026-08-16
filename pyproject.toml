@@ -21,8 +21,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-anndata = ["anndata>=0.8"]
-squidpy = ["anndata>=0.8", "squidpy>=1.2"]
+# anndata = ["anndata>=0.8"]
+# squidpy = ["anndata>=0.8", "squidpy>=1.2"]
+anndata = ["anndata>=0.11"]
+squidpy = ["anndata>=0.11", "squidpy>=1.2"]
 docs = ["sphinx>=6", "numpydoc>=1.5", "anndata>=0.8"]
 
 [project.scripts]
