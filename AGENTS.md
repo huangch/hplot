@@ -34,7 +34,11 @@ squidpy: unsigned distance from anchor points + polynomial fit, descriptive only
 
 - `python -m pytest test/` (note: `test/`, not `tests/`).
 - No CI workflow in this repo (no `.github/`); it's validated from the sibling repos' pipelines.
-- `_run_all_tests.py` is a Docker-era helper that hardcodes `/workspace/wsinsight/hplot` + a specific conda python — don't use it on a fresh host.
+
+## Environment
+
+- Standalone env: `sh ./conda-setup.sh -n hplot [-r|--reset]` — creates a py3.11 env with the core deps (matplotlib/pandas/scipy/numpy/pygam). No GPU/CUDA stack needed (pure CPU plotting + stats).
+- Docker: `./docker-build-push.sh` builds `hplot:latest` and pushes `huangchtw/hplot:latest`. The image ships a `data` user (uid 1000) and an entrypoint that remaps it to the mount owner at run time (same pattern as wsinsight).
 
 ## Conventions
 

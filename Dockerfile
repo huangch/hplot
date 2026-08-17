@@ -1,9 +1,19 @@
 # H-Plot reproducibility container
 #
-# Build:  docker build -t hplot .
-# Run:    docker run --rm -v "$PWD":/data hplot \
-#             test -i /data/data.csv --target immune_fraction \
+# Pure-CPU plotting + stats core — no GPU/CUDA stack needed, so this uses a
+# slim base + pip rather than the conda/CUDA image the wsinsight/sptxinsight
+# siblings use. pygam ships a pure-Python wheel, so no compiler is required.
+#
+# Build:  ./docker-build-push.sh              # or: docker build -t hplot:latest .
+# Run (interactive shell; uid auto-matched to the mounted /workspace owner):
+#   docker run --rm -it -v "$PWD":/workspace hplot:latest
+# Run (a CLI command, as the remapped user):
+#   docker run --rm -v "$PWD":/workspace hplot:latest \
+#       hplot test -i /workspace/data.csv --target immune_fraction \
 #                  --group hpv_status --permutations 999
+# Force a specific uid/gid instead of the mount owner:
+#   docker run --rm -e HOST_UID=1000 -e HOST_GID=1000 \
+#       -v "$PWD":/workspace hplot:latest bash
 
 FROM python:3.11-slim
 
@@ -13,22 +23,48 @@ LABEL org.opencontainers.image.title="hplot" \
 
 WORKDIR /app
 
-# Install build deps then package deps in one layer; no cache kept
-COPY pyproject.toml setup.py* README.md ./
-COPY hplot/ ./hplot/
+# bash (for the entrypoint + default shell) and util-linux (setpriv, used by the
+# run-time uid-remap entrypoint) are not in the slim base by default.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends bash util-linux \
+ && rm -rf /var/lib/apt/lists/*
 
+# Core deps declared in pyproject.toml (matplotlib/pandas/scipy/numpy/pygam).
+# NOTE: the version specs are QUOTED so the shell does not treat `>=` as a file
+# redirect — the previous unquoted form silently dropped every pin. Installed in
+# their own layer so the (rarely-changing) dependency cache survives source edits.
 RUN pip install --no-cache-dir --upgrade pip \
  && pip install --no-cache-dir \
-        matplotlib>=3.0 \
-        pandas>=1.0 \
-        scipy>=1.6 \
-        numpy>=1.18 \
-        pygam>=0.9 \
- && pip install --no-cache-dir --no-deps -e .
+        "matplotlib>=3.0" \
+        "pandas>=1.0" \
+        "scipy>=1.6" \
+        "numpy>=1.18" \
+        "pygam>=0.9"
 
-# Non-root user for security
-RUN useradd -m hplotuser
-USER hplotuser
+# Install the package itself from pyproject.toml (authoritative). The legacy
+# setup.py is NOT copied — it is a stale duplicate whose install_requires is
+# missing pygam.
+COPY pyproject.toml README.md ./
+COPY hplot/ ./hplot/
+RUN pip install --no-cache-dir --no-deps .
 
-ENTRYPOINT ["hplot"]
-CMD ["--help"]
+# Build-time sanity: the CLI and the import must work before we bake the image.
+RUN hplot --help >/dev/null \
+ && python -c "import hplot; print('hplot', hplot.__version__, 'OK')"
+
+# Non-root user. uid is 1000 (matching the siblings); it is remapped at RUN time
+# by the entrypoint to the owner of the mounted /workspace (or $HOST_UID/$HOST_GID),
+# so the baked id never has to match the host.
+COPY docker-entrypoint.sh ./
+RUN groupadd -g 1000 user \
+ && useradd -m -u 1000 -g 1000 user \
+ && install -m 0755 ./docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+
+WORKDIR /workspace
+# NOTE: no `USER` here on purpose — the container starts as root so the
+# entrypoint can remap `user` to the mount owner, then drops privileges via
+# setpriv. `docker run --user ...` still works: the entrypoint detects a
+# non-root start and execs the command unchanged.
+SHELL ["/bin/bash", "-lc"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["bash"]
