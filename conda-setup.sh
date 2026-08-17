@@ -29,10 +29,10 @@ DO_RESET=0
 DO_EXTRAS=0
 DO_MCP=0
 
-while [[ $# -gt 0 ]]; do
+while [ $# -gt 0 ]; do
     case "$1" in
         -n|--name)
-            if [[ -z "${2:-}" ]]; then
+            if [ -z "${2:-}" ]; then
                 echo "Error: -n/--name requires an environment name." >&2
                 exit 1
             fi
@@ -59,7 +59,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -z "$ENV_NAME" ]]; then
+if [ -z "$ENV_NAME" ]; then
     echo "Error: no conda environment specified and no environment is currently active." >&2
     echo "       Use -n ENV_NAME to specify one." >&2
     exit 1
@@ -69,21 +69,21 @@ echo "Target conda environment: ${ENV_NAME}  (reset=${DO_RESET}, extras=${DO_EXT
 
 # ── (Re-)create environment ───────────────────────────────────────────────────
 CONDA_BASE="$(conda info --base 2>/dev/null || true)"
-if [[ -z "${CONDA_BASE}" ]]; then
+if [ -z "${CONDA_BASE}" ]; then
     for _base in /opt/conda /opt/anaconda3; do
-        if [[ -f "${_base}/etc/profile.d/conda.sh" ]]; then
+        if [ -f "${_base}/etc/profile.d/conda.sh" ]; then
             CONDA_BASE="${_base}"
             break
         fi
     done
 fi
-if [[ -z "${CONDA_BASE}" || ! -f "${CONDA_BASE}/etc/profile.d/conda.sh" ]]; then
+if [ -z "${CONDA_BASE}" ] || [ ! -f "${CONDA_BASE}/etc/profile.d/conda.sh" ]; then
     echo "Error: cannot locate conda.sh. Activate conda first or set CONDA_BASE." >&2
     exit 1
 fi
-source "${CONDA_BASE}/etc/profile.d/conda.sh"
+. "${CONDA_BASE}/etc/profile.d/conda.sh"
 
-if [[ "$DO_RESET" -eq 1 ]]; then
+if [ "$DO_RESET" -eq 1 ]; then
     conda deactivate
     conda env remove -n "${ENV_NAME}" -y 2>/dev/null || true
     # Pure CPU stack — no CUDA/GPU packages.
@@ -102,17 +102,17 @@ export PIP_CACHE_DIR=/tmp/pip-cache-hplot
 # Core = matplotlib/pandas/scipy/numpy/pygam. Optional extras (anndata, squidpy,
 # mcp) are opt-in via -e/--extras and -m/--mcp so the default env stays minimal.
 EXTRAS=""
-if [[ "${DO_EXTRAS}" -eq 1 ]]; then
+if [ "${DO_EXTRAS}" -eq 1 ]; then
     EXTRAS="anndata,squidpy"
 fi
-if [[ "${DO_MCP}" -eq 1 ]]; then
-    if [[ -n "${EXTRAS}" ]]; then
+if [ "${DO_MCP}" -eq 1 ]; then
+    if [ -n "${EXTRAS}" ]; then
         EXTRAS="${EXTRAS},mcp"
     else
         EXTRAS="mcp"
     fi
 fi
-if [[ -n "${EXTRAS}" ]]; then
+if [ -n "${EXTRAS}" ]; then
     pip install -e "${SCRIPT_DIR}[${EXTRAS}]"
 else
     pip install -e "${SCRIPT_DIR}"
@@ -129,6 +129,6 @@ print('hplot import OK:', hplot.__name__)
 # ── Smoke test ────────────────────────────────────────────────────────────────
 hplot --help
 
-if [[ "${DO_MCP}" -eq 1 ]]; then
+if [ "${DO_MCP}" -eq 1 ]; then
     hplot-mcp --help
 fi
