@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # conda-setup.sh — create and populate the standalone hplot conda environment.
 #
-# Usage:  sh ./conda-setup.sh [-n ENV_NAME] [-r|--reset] [-e|--extras]
+# Usage:  sh ./conda-setup.sh [-n ENV_NAME] [-r|--reset] [-e|--extras] [-m|--mcp]
 #
 #   -n | --name  ENV_NAME   Conda environment to use (default: current active env).
 #   -r | --reset            Deactivate, remove, recreate, and activate the env.
@@ -11,9 +11,13 @@
 #                           extras (AnnData API + squidpy-based examples).
 #                           NOT installed by default — the core CLI is CSV-based
 #                           and only needs matplotlib/pandas/scipy/numpy/pygam.
+#   -m | --mcp              Also install the `mcp` extra (fastmcp) which
+#                           provides the `hplot-mcp` server. NOT installed by
+#                           default (matching the wsinsight/sptxinsight
+#                           convention) to keep the env lean.
 #
-# hplot is the H-Plot stats/plotting core. It is pure CPU (no GPU/CUDA stack)
-# and has no MCP server, so this script is intentionally lean.
+# hplot is the H-Plot stats/plotting core. It is pure CPU (no GPU/CUDA stack),
+# so this script is intentionally lean.
 
 set -e   # abort on first error
 
@@ -23,6 +27,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENV_NAME="${CONDA_DEFAULT_ENV:-}"   # default = current active env
 DO_RESET=0
 DO_EXTRAS=0
+DO_MCP=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -42,9 +47,13 @@ while [[ $# -gt 0 ]]; do
             DO_EXTRAS=1
             shift
             ;;
+        -m|--mcp)
+            DO_MCP=1
+            shift
+            ;;
         *)
             echo "Unknown option: $1" >&2
-            echo "Usage: sh ./conda-setup.sh [-n ENV_NAME] [-r|--reset] [-e|--extras]" >&2
+            echo "Usage: sh ./conda-setup.sh [-n ENV_NAME] [-r|--reset] [-e|--extras] [-m|--mcp]" >&2
             exit 1
             ;;
     esac
@@ -56,7 +65,7 @@ if [[ -z "$ENV_NAME" ]]; then
     exit 1
 fi
 
-echo "Target conda environment: ${ENV_NAME}  (reset=${DO_RESET}, extras=${DO_EXTRAS})"
+echo "Target conda environment: ${ENV_NAME}  (reset=${DO_RESET}, extras=${DO_EXTRAS}, mcp=${DO_MCP})"
 
 # ── (Re-)create environment ───────────────────────────────────────────────────
 CONDA_BASE="$(conda info --base 2>/dev/null || true)"
@@ -90,10 +99,21 @@ pip cache purge || true
 export PIP_CACHE_DIR=/tmp/pip-cache-hplot
 
 # ── Install hplot + core deps from pyproject.toml ─────────────────────────────
-# Core = matplotlib/pandas/scipy/numpy/pygam. Optional extras (anndata, squidpy)
-# are opt-in via -e/--extras so the default env stays minimal.
+# Core = matplotlib/pandas/scipy/numpy/pygam. Optional extras (anndata, squidpy,
+# mcp) are opt-in via -e/--extras and -m/--mcp so the default env stays minimal.
+EXTRAS=""
 if [[ "${DO_EXTRAS}" -eq 1 ]]; then
-    pip install -e "${SCRIPT_DIR}[anndata,squidpy]"
+    EXTRAS="anndata,squidpy"
+fi
+if [[ "${DO_MCP}" -eq 1 ]]; then
+    if [[ -n "${EXTRAS}" ]]; then
+        EXTRAS="${EXTRAS},mcp"
+    else
+        EXTRAS="mcp"
+    fi
+fi
+if [[ -n "${EXTRAS}" ]]; then
+    pip install -e "${SCRIPT_DIR}[${EXTRAS}]"
 else
     pip install -e "${SCRIPT_DIR}"
 fi
@@ -108,3 +128,7 @@ print('hplot import OK:', hplot.__name__)
 
 # ── Smoke test ────────────────────────────────────────────────────────────────
 hplot --help
+
+if [[ "${DO_MCP}" -eq 1 ]]; then
+    hplot-mcp --help
+fi

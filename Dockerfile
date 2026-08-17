@@ -41,6 +41,11 @@ RUN pip install --no-cache-dir --upgrade pip \
         "numpy>=1.18" \
         "pygam>=0.9"
 
+# MCP server (hplot-mcp). Shipped in the image so the MCP server works both in
+# the conda env (conda-setup.sh -m/--mcp) and in Docker without an extra install.
+# Kept in its own layer so core-only rebuilds don't re-fetch it.
+RUN pip install --no-cache-dir "fastmcp>=2.0"
+
 # Install the package itself from pyproject.toml (authoritative). The legacy
 # setup.py is NOT copied — it is a stale duplicate whose install_requires is
 # missing pygam.
@@ -48,8 +53,10 @@ COPY pyproject.toml README.md ./
 COPY hplot/ ./hplot/
 RUN pip install --no-cache-dir --no-deps .
 
-# Build-time sanity: the CLI and the import must work before we bake the image.
+# Build-time sanity: the CLI, the MCP server, and the import must work before
+# we bake the image.
 RUN hplot --help >/dev/null \
+ && hplot-mcp --help >/dev/null \
  && python -c "import hplot; print('hplot', hplot.__version__, 'OK')"
 
 # Non-root user. uid is 1000 (matching the siblings); it is remapped at RUN time

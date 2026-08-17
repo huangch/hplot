@@ -17,6 +17,7 @@ The **stats/plotting core** of the ecosystem. It is a library + thin CLI, not a 
 - `pathways.py` — H-Pathway: rank-based `ucell_scores` + `pathway_layer_profile`. **Deliberately no self-contained per-cell UCell-average test** — that's false-positive-prone on targeted panels. Scoring is separated from inference on purpose; don't "simplify" it back.
 - `plotting.py` — `plot_hloci_bands/strip/fdr/dotplot`, `plot_hpathway_dotplot`, etc.
 - `tl.py` / `pp.py` / `pl.py` — scanpy-style layers; `_anndata.py` — AnnData I/O.
+- `mcp/` — `hplot-mcp` FastMCP server (optional `mcp` extra).
 
 ## The three stages (don't conflate)
 
@@ -30,6 +31,14 @@ H-Loci summary: `deviation_tensor` → cross-slide signed z → cluster-mass ban
 
 squidpy: unsigned distance from anchor points + polynomial fit, descriptive only. hplot: **signed** border layers + **cohort-level** inference (CI, permutation, GAM). If asked "why not just use squidpy", that's the answer.
 
+## MCP server (`hplot-mcp`)
+
+- Entry point `hplot.mcp.__main__:main`; extra `mcp = ["fastmcp>=2.0"]`. stdio by default; `--http HOST:PORT` (suggested port **8767**, after wsinsight 8765 / sptxinsight 8766). `--max-concurrent N` (default 1 — pure CPU).
+- **Unlike wsinsight (bundled JSON) and sptxinsight (live `describe`), hplot has no `describe` command** — the tool surface is a **hand-written** command table in `hplot/mcp/schema.py` (one entry per sub-command). **Keep it in sync with `hplot/cli.py`** whenever the CLI changes.
+- Tools: one per sub-command, faithful per-parameter mirrors of `hplot <sub> --help`. Long-running (`test`, `screen`, `loci` — permutation-heavy) return a `job_id`; poll `job_status` / `job_logs` / `cancel_job` / `list_jobs`. Short (`plot`, `gam`) run synchronously (600 s timeout) and return `{status, returncode, argv, duration_s, log_tail}`.
+- Resource `hplot://schema` (the command table) + prompt `hplot_workflow`.
+- Adapter (`hplot/mcp/adapters.py`) translates snake_case args → kebab-case `--flags`; bool flags only when truthy; `nargs` args repeated; no positional args.
+
 ## Tests
 
 - `python -m pytest test/` (note: `test/`, not `tests/`).
@@ -37,8 +46,8 @@ squidpy: unsigned distance from anchor points + polynomial fit, descriptive only
 
 ## Environment
 
-- Standalone env: `sh ./conda-setup.sh -n hplot [-r|--reset]` — creates a py3.11 env with the core deps (matplotlib/pandas/scipy/numpy/pygam). No GPU/CUDA stack needed (pure CPU plotting + stats).
-- Docker: `./docker-build-push.sh` builds `hplot:latest` and pushes `huangchtw/hplot:latest`. The image ships a `data` user (uid 1000) and an entrypoint that remaps it to the mount owner at run time (same pattern as wsinsight).
+- Standalone env: `sh ./conda-setup.sh -n hplot [-r|--reset] [-e|--extras] [-m|--mcp]` — creates a py3.11 env with the core deps (matplotlib/pandas/scipy/numpy/pygam). No GPU/CUDA stack needed (pure CPU plotting + stats). The `-m`/`--mcp` flag adds `fastmcp` (the `hplot-mcp` server); **not installed by default** (matching the wsinsight/sptxinsight convention).
+- Docker: `./docker-build-push.sh` builds `hplot:latest` and pushes `huangchtw/hplot:latest`. The image ships a `user` (uid 1000) and an entrypoint that remaps it to the mount owner at run time (same pattern as wsinsight). `fastmcp` is baked in, so `hplot-mcp` works in the image without an extra install.
 
 ## Conventions
 

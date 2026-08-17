@@ -25,10 +25,14 @@ dependencies = [
 # squidpy = ["anndata>=0.8", "squidpy>=1.2"]
 anndata = ["anndata>=0.11"]
 squidpy = ["anndata>=0.11", "squidpy>=1.2"]
+# MCP server (hplot-mcp). NOT installed by default — the core CLI is CSV-based
+# and only needs matplotlib/pandas/scipy/numpy/pygam.
+mcp = ["fastmcp>=2.0"]
 docs = ["sphinx>=6", "numpydoc>=1.5", "anndata>=0.8"]
 
 [project.scripts]
 hplot = "hplot.cli:main"
+hplot-mcp = "hplot.mcp.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/yourusername/hplot"
