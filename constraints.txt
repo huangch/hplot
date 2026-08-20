@@ -1,0 +1,41 @@
+# constraints.txt for hplot
+#
+# hplot's pyproject.toml deliberately keeps LOOSE lower bounds — it is a library
+# and should not dictate versions to its consumers. This file is the lockfile:
+# the known-good set, used by conda-setup.sh and the Dockerfile so the container
+# and the conda env are the same configuration.
+#
+# ALWAYS install with this file:
+#     pip install -c constraints.txt -e .
+#
+# Mirrors wsinsight/sptxinsight/kurtorank/wsinsight-train so hplot stays
+# co-installable into the shared env. hplot alone is pure CPU and would tolerate
+# numpy 2.x; the cap exists only so a shared env keeps one numpy generation.
+
+# --- core ------------------------------------------------------------------
+numpy<2.0.0
+pandas==2.3.3
+scipy==1.16.2
+matplotlib==3.10.7
+
+# pygam 0.9.x requires scipy>=1.11.1,<1.12, which cannot coexist with the
+# scipy 1.16.x the rest of the stack uses. 0.12.0 widens that to <1.17 and is
+# the first release that fits; do not fall back to 0.9.x here.
+pygam==0.12.0
+
+# --- MCP server (hplot-mcp; optional `mcp` extra) --------------------------
+# Same floor as wsinsight/sptxinsight so one env can serve all of them.
+fastmcp>=3.4.5
+
+# --- optional anndata / squidpy extras -------------------------------------
+# Only pulled by `pip install .[anndata]` / `.[squidpy]`. Held to the same
+# generation as the siblings: zarr 3.x and anndata 0.13+ both require numpy>=2.
+anndata>=0.11,<0.13
+squidpy<1.7
+zarr<3
+xarray<2025
+scanpy<1.11
+
+# setuptools>=81 removes pkg_resources, which several packages in the shared
+# env still import.
+setuptools<67.0.0

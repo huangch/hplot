@@ -33,8 +33,12 @@ RUN apt-get update \
 # NOTE: the version specs are QUOTED so the shell does not treat `>=` as a file
 # redirect — the previous unquoted form silently dropped every pin. Installed in
 # their own layer so the (rarely-changing) dependency cache survives source edits.
+# constraints.txt is copied first so this layer is locked to the same set the
+# conda env uses; unconstrained, pip could pick a pygam whose scipy range
+# conflicts with the rest of the stack.
+COPY constraints.txt ./
 RUN pip install --no-cache-dir --upgrade pip \
- && pip install --no-cache-dir \
+ && pip install --no-cache-dir -c constraints.txt \
         "matplotlib>=3.0" \
         "pandas>=1.0" \
         "scipy>=1.6" \
@@ -44,7 +48,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 # MCP server (hplot-mcp). Shipped in the image so the MCP server works both in
 # the conda env (conda-setup.sh -m/--mcp) and in Docker without an extra install.
 # Kept in its own layer so core-only rebuilds don't re-fetch it.
-RUN pip install --no-cache-dir "fastmcp>=2.0"
+RUN pip install --no-cache-dir -c constraints.txt "fastmcp>=2.0"
 
 # Install the package itself from pyproject.toml (authoritative). The legacy
 # setup.py is NOT copied — it is a stale duplicate whose install_requires is

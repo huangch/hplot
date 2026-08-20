@@ -94,13 +94,17 @@ conda activate "${ENV_NAME}"
 pip install --upgrade pip
 
 # ── Pip cache fix (NAS inode quota) ──────────────────────────────────────────
-pip cache purge || true
-# Redirect pip's wheel cache to /tmp to bypass NAS inode quotas.
-export PIP_CACHE_DIR=/tmp/pip-cache-hplot
+# Redirect pip's wheel cache to /tmp to bypass NAS inode quotas. Exported before
+# any purge: `pip cache purge` obeys this variable, so purging first wiped the
+# user's global ~/.cache/pip.
+export PIP_CACHE_DIR="${PIP_CACHE_DIR:-/tmp/pip-cache-hplot}"
 
 # ── Install hplot + core deps from pyproject.toml ─────────────────────────────
 # Core = matplotlib/pandas/scipy/numpy/pygam. Optional extras (anndata, squidpy,
 # mcp) are opt-in via -e/--extras and -m/--mcp so the default env stays minimal.
+# constraints.txt is the lockfile; pyproject keeps loose bounds on purpose, so
+# without -c pip is free to pick e.g. a pygam whose scipy range conflicts.
+CONSTRAINTS="${SCRIPT_DIR}/constraints.txt"
 EXTRAS=""
 if [ "${DO_EXTRAS}" -eq 1 ]; then
     EXTRAS="anndata,squidpy"
@@ -113,22 +117,48 @@ if [ "${DO_MCP}" -eq 1 ]; then
     fi
 fi
 if [ -n "${EXTRAS}" ]; then
-    pip install -e "${SCRIPT_DIR}[${EXTRAS}]"
+    pip install -c "${CONSTRAINTS}" -e "${SCRIPT_DIR}[${EXTRAS}]"
 else
-    pip install -e "${SCRIPT_DIR}"
+    pip install -c "${CONSTRAINTS}" -e "${SCRIPT_DIR}"
 fi
-
-# ── Safety checks ─────────────────────────────────────────────────────────────
-python -c "
-import numpy, pandas, scipy, matplotlib, pygam
-print(f'numpy {numpy.__version__} | pandas {pandas.__version__} | scipy {scipy.__version__} OK')
-import hplot
-print('hplot import OK:', hplot.__name__)
-"
 
 # ── Smoke test ────────────────────────────────────────────────────────────────
-hplot --help
+# Hard checks are fatal: a half-installed env must not look like a success.
+# The test suite is reported but does not fail the setup.
+echo "---- smoke test ----"
+SMOKE_FAIL=0
+smoke() {                       # smoke <label> <command...>
+    label="$1"; shift
+    if "$@" >/dev/null 2>&1; then
+        printf '  PASS  %s\n' "$label"
+    else
+        printf '  FAIL  %s\n' "$label"
+        SMOKE_FAIL=$((SMOKE_FAIL + 1))
+    fi
+}
 
+python -c 'import importlib.metadata as m; print("  numpy", m.version("numpy"), "| scipy", m.version("scipy"), "| pygam", m.version("pygam"))' || true
+
+smoke "hplot on PATH"        command -v hplot
+smoke "hplot --help"         hplot --help
+smoke "import hplot"         python -c 'import hplot'
+smoke "import pygam"         python -c 'import pygam'
+# Only matters when this env is shared with wsinsight; hplot alone tolerates 2.x.
+smoke "numpy < 2"            python -c 'import numpy, sys; sys.exit(int(numpy.__version__.split(".")[0]) >= 2)'
 if [ "${DO_MCP}" -eq 1 ]; then
-    hplot-mcp --help
+    smoke "hplot-mcp on PATH"    command -v hplot-mcp
+    smoke "hplot-mcp --help"     hplot-mcp --help
 fi
+
+# NOTE: this repo uses test/, not tests/.
+if [ -d "${SCRIPT_DIR}/test" ]; then
+    python -m pytest "${SCRIPT_DIR}/test" -q \
+        && echo "  PASS  test suite" \
+        || echo "  WARN  test suite did not pass (non-fatal)"
+fi
+
+if [ "${SMOKE_FAIL}" -ne 0 ]; then
+    echo "smoke test: ${SMOKE_FAIL} check(s) FAILED" >&2
+    exit 1
+fi
+echo "smoke test: all checks passed"

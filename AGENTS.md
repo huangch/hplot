@@ -1,6 +1,6 @@
 # hplot — Agent Guide
 
-H-Plot: Kaplan-Meier-style curves of tissue composition vs **signed** distance from a tissue boundary (e.g. tumor–stroma interface). Layer 0 = boundary, >0 inside, <0 outside; per-layer CI across cases. Python >=3.7, Apache-2.0, v0.1.0.
+H-Plot: Kaplan-Meier-style curves of tissue composition vs **signed** distance from a tissue boundary (e.g. tumor–stroma interface). Layer 0 = boundary, >0 inside, <0 outside; per-layer CI across cases. Python >=3.11, Apache-2.0, v0.1.0.
 
 ## What this package is
 
