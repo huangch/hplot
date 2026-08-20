@@ -48,7 +48,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 # MCP server (hplot-mcp). Shipped in the image so the MCP server works both in
 # the conda env (conda-setup.sh -m/--mcp) and in Docker without an extra install.
 # Kept in its own layer so core-only rebuilds don't re-fetch it.
-RUN pip install --no-cache-dir -c constraints.txt "fastmcp>=2.0"
+RUN pip install --no-cache-dir -c constraints.txt "fastmcp>=3.4.5"
 
 # Install the package itself from pyproject.toml (authoritative). The legacy
 # setup.py is NOT copied — it is a stale duplicate whose install_requires is
