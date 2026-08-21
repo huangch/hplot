@@ -29,7 +29,10 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends bash util-linux \
  && rm -rf /var/lib/apt/lists/*
 
-# Core deps declared in pyproject.toml (matplotlib/pandas/scipy/numpy/pygam).
+# Core deps declared in pyproject.toml (matplotlib/pandas/scipy/numpy/pygam/
+# anndata). Must be kept in sync with [project.dependencies] — the package
+# itself is installed with --no-deps below, so anything missing here is missing
+# in the image.
 # NOTE: the version specs are QUOTED so the shell does not treat `>=` as a file
 # redirect — the previous unquoted form silently dropped every pin. Installed in
 # their own layer so the (rarely-changing) dependency cache survives source edits.
@@ -43,7 +46,8 @@ RUN pip install --no-cache-dir --upgrade pip \
         "pandas>=1.0" \
         "scipy>=1.6" \
         "numpy>=1.18" \
-        "pygam>=0.9"
+        "pygam>=0.9" \
+        "anndata>=0.11,<0.13"
 
 # MCP server (hplot-mcp). Shipped in the image so the MCP server works both in
 # the conda env (conda-setup.sh -m/--mcp) and in Docker without an extra install.

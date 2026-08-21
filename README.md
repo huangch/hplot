@@ -42,12 +42,12 @@ pip install -e .
 
 **Hard dependencies:** `pandas`, `numpy`, `scipy`, `matplotlib`, **`pygam`**
 
-**Optional extras** — only needed for the AnnData / scanpy / squidpy interface
-(§ *AnnData interface* below). The core engine and CLI work without them:
+**Optional extra** — `squidpy` is never imported by hplot; install it only if you
+want to build spatial graphs yourself before calling `pp.border_layers`
+(§ *AnnData interface* below). `anndata` is a core dependency and needs no extra:
 
 ```bash
-pip install -e ".[anndata]"    # adds anndata (>=0.8)
-pip install -e ".[squidpy]"    # adds anndata + squidpy (>=1.2) for spatial graphs
+pip install -e ".[squidpy]"    # adds squidpy (>=1.2) for spatial graphs
 ```
 
 ```bash
@@ -229,7 +229,7 @@ Both return a matplotlib `Axes`. Any extra keyword is forwarded to
 
 | Symptom | Likely cause / fix |
 |---------|--------------------|
-| `ImportError: ... pip install 'hplot[anndata]'` | The AnnData API needs the optional extra: `pip install "hplot[anndata]"`. |
+| `ImportError: ... needs anndata` | `anndata` is a core dependency, so this means the install is incomplete: `pip install "anndata>=0.11,<0.13"`. |
 | All `hplot_layer` are NaN | No base cells matched — check `cluster_key` values and `base_categories` spelling/case. |
 | Only NaN for one sample + a warning | That sample had `< 4` cells or a degenerate (collinear) layout; other samples are fine. |
 | Border sits in the wrong place | Tune `n_min` / `ratio` (region call) and `max_edge` (Delaunay pruning), or supply a squidpy graph via `sq.gr.spatial_neighbors`. |
@@ -239,9 +239,8 @@ Both return a matplotlib `Axes`. Any extra keyword is forwarded to
 | Wrong quantity plotted | `value_kind="expression"` needs a gene in `.X`; `value_kind="proportion"` needs an `.obs` categorical column. |
 
 > The `pp`/`tl`/`pl`/`gr` modules import `anndata` **lazily** (inside the
-> functions), so `import hplot` and `import hplot.core` still work with only the
-> hard dependencies installed. You only need `pip install "hplot[anndata]"` when
-> you actually call this interface.
+> functions), so `import hplot` and `import hplot.core` stay cheap even though
+> `anndata` ships as a core dependency.
 
 ---
 

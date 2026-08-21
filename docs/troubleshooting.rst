@@ -10,8 +10,9 @@ AnnData interface
 
    * - Symptom
      - Likely cause / fix
-   * - ``ImportError: ... pip install 'hplot[...]'``
-     - Install the optional extra: ``pip install "hplot[anndata]"``.
+   * - ``ImportError: ... needs anndata``
+     - ``anndata`` is a core dependency, so the install is incomplete:
+       ``pip install "anndata>=0.11,<0.13"``.
    * - All ``hplot_layer`` are NaN
      - No base cells matched — check ``cluster_key`` values and
        ``base_categories`` spelling/case.

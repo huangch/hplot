@@ -49,12 +49,15 @@ confidence intervals capture across-case variability.
 | numpy      | ≥ 1.18   | Numerical computation       |
 | pygam      | ≥ 0.8    | GAM smoothing (Stage 2)     |
 
-Optional extras (only for the AnnData / scanpy / squidpy interface, § 5.x):
+Optional extras:
 
-| Extra              | Adds                       | Install                        |
-| ------------------ | -------------------------- | ------------------------------ |
-| `hplot[anndata]`   | `anndata` ≥ 0.8            | `pip install "hplot[anndata]"` |
-| `hplot[squidpy]`   | `anndata` + `squidpy` ≥1.2 | `pip install "hplot[squidpy]"` |
+| Extra              | Adds                       | Install                       |
+| ------------------ | -------------------------- | ----------------------------- |
+| `hplot[squidpy]`   | `squidpy` ≥ 1.2            | `pip install "hplot[squidpy]"` |
+| `hplot[mcp]`       | `fastmcp` (`hplot-mcp`)    | `pip install "hplot[mcp]"`     |
+
+`anndata` is a **core** dependency — the `pp`/`tl`/`pl` API needs no extra.
+Nothing in hplot imports `squidpy`; that extra is a convenience only.
 
 ### 2.2 Editable Install (Recommended)
 
@@ -298,8 +301,8 @@ run_hplot_batch(
 ### 5.6 AnnData interface (scanpy / squidpy)
 
 When the input is an `AnnData` rather than a tidy CSV, use the scanpy-style
-`pp`/`tl`/`pl` API (requires `pip install "hplot[anndata]"`, or
-`"hplot[squidpy]"` for spatial graphs):
+`pp`/`tl`/`pl` API (`anndata` is a core dependency; add
+`pip install "hplot[squidpy]"` only if you want squidpy spatial graphs):
 
 ```python
 import hplot
@@ -586,5 +589,5 @@ python run_hplot.py \
 | Empty plot                           | All rows have NaN in target column       | Check CSV for missing values in target columns.  |
 | No dual x-axis                       | `distance` or `unit` not provided        | Pass both `distance=` and `unit=` to `fit()`.    |
 | Colors don't match expectation       | `color_map` missing a group label        | Ensure every group value has a key in `color_map`. |
-| `ImportError: ... pip install 'hplot[anndata]'` | AnnData extra not installed | `pip install "hplot[anndata]"` |
+| `ImportError: ... needs anndata` | Install incomplete (`anndata` is core) | `pip install "anndata>=0.11,<0.13"` |
 | All `hplot_layer` are NaN            | No base cells matched                    | Check `cluster_key` values and `base_categories` spelling. |

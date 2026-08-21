@@ -17,8 +17,9 @@ def _require_anndata():
         import anndata  # noqa: F401
     except ImportError as exc:  # pragma: no cover
         raise ImportError(
-            "The AnnData API of hplot needs anndata. Install it with:\n"
-            "    pip install 'hplot[anndata]'   # or  pip install 'hplot[squidpy]'"
+            "The AnnData API of hplot needs anndata, which is a core "
+            "dependency — reaching this means the install is incomplete.\n"
+            "    pip install 'anndata>=0.11,<0.13'"
         ) from exc
 
 

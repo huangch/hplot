@@ -22,14 +22,19 @@ dependencies = [
   "pandas>=1.0",
   "scipy>=1.6",
   "numpy>=1.18",
-  "pygam>=0.9"
+  "pygam>=0.9",
+  # __init__ exports pp/tl/pl unconditionally, so the AnnData API is part of
+  # the promised surface. Upper bound mirrors wsinsight: anndata 0.13+ pulls
+  # the zarr>=3 / numpy>=2 generation, which the shared env cannot take.
+  "anndata>=0.11,<0.13"
 ]
 
 [project.optional-dependencies]
-# Upper bounds mirror wsinsight: anndata 0.13+ and squidpy 1.7+ pull the
-# zarr>=3 / numpy>=2 generation, which the shared env cannot take.
-anndata = ["anndata>=0.11,<0.13"]
-squidpy = ["anndata>=0.11,<0.13", "squidpy>=1.2,<1.7"]
+# No-op alias so existing `pip install hplot[anndata]` instructions keep working.
+anndata = []
+# Nothing in hplot imports squidpy; this extra only exists so users following
+# the pp.border_layers docstring can pull it in one step. 1.7+ needs numpy>=2.
+squidpy = ["squidpy>=1.2,<1.7"]
 # MCP server (hplot-mcp). NOT installed by default — the core CLI is CSV-based
 # and only needs matplotlib/pandas/scipy/numpy/pygam.
 mcp = ["fastmcp>=3.4.5"]

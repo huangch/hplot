@@ -10,9 +10,8 @@ peaks just outside the tumour border), then walks the pp -> tl -> pl workflow:
     pl.hplot           draw it
 
 No real data or squidpy graph is required: pp.border_layers falls back to a
-Delaunay graph built from adata.obsm['spatial']. Requires the optional extra:
-
-    pip install "hplot[anndata]"
+Delaunay graph built from adata.obsm['spatial']. anndata is a core dependency,
+so a plain `pip install hplot` is enough.
 """
 
 import numpy as np

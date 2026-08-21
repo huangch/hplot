@@ -27,9 +27,9 @@ pygam==0.12.0
 # Same floor as wsinsight/sptxinsight so one env can serve all of them.
 fastmcp>=3.4.5
 
-# --- optional anndata / squidpy extras -------------------------------------
-# Only pulled by `pip install .[anndata]` / `.[squidpy]`. Held to the same
-# generation as the siblings: zarr 3.x and anndata 0.13+ both require numpy>=2.
+# --- anndata (core) / squidpy (optional extra) ------------------------------
+# Held to the same generation as the siblings: zarr 3.x and anndata 0.13+ both
+# require numpy>=2, which the shared wsinsight env cannot take.
 anndata>=0.11,<0.13
 squidpy<1.7
 zarr==2.18.7

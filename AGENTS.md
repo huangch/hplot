@@ -46,12 +46,12 @@ squidpy: unsigned distance from anchor points + polynomial fit, descriptive only
 
 ## Environment
 
-- Standalone env: `sh ./conda-setup.sh -n hplot [-r|--reset] [-e|--extras] [-m|--mcp]` — creates a py3.11 env with the core deps (matplotlib/pandas/scipy/numpy/pygam). No GPU/CUDA stack needed (pure CPU plotting + stats). The `-m`/`--mcp` flag adds `fastmcp` (the `hplot-mcp` server); **not installed by default** (matching the wsinsight/sptxinsight convention).
+- Standalone env: `sh ./conda-setup.sh -n hplot [-r|--reset] [-m|--mcp]` — creates a py3.11 env with the core deps (matplotlib/pandas/scipy/numpy/pygam/anndata). No GPU/CUDA stack needed (pure CPU plotting + stats). The `-m`/`--mcp` flag adds `fastmcp` (the `hplot-mcp` server); **not installed by default** (matching the wsinsight/sptxinsight convention).
 - Docker: `./docker-build-push.sh` builds `hplot:latest` and pushes `huangchtw/hplot:latest`. The image ships a `user` (uid 1000) and an entrypoint that remaps it to the mount owner at run time (same pattern as wsinsight). `fastmcp` is baked in, so `hplot-mcp` works in the image without an extra install.
 
 ## Conventions
 
-- Deps are minimal on purpose: matplotlib/pandas/scipy/numpy/pygam. `anndata` and `squidpy` are **optional extras**, not core — guard imports.
+- Deps are minimal on purpose: matplotlib/pandas/scipy/numpy/pygam plus `anndata` (core, because `__init__` exports the `pp`/`tl`/`pl` API unconditionally). `anndata` is still imported **lazily inside functions** — `test/test_anndata_api.py` asserts no module-level import, so `import hplot.core` stays cheap. `squidpy` is not imported anywhere in the package; it is a convenience extra only.
 - No lint config in `pyproject.toml` (no ruff/pytest sections); keep style consistent with existing modules.
 
 ## Sibling repos (same ecosystem)
