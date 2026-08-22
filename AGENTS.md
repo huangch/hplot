@@ -4,10 +4,27 @@ H-Plot: Kaplan-Meier-style curves of tissue composition vs **signed** distance f
 
 ## What this package is
 
-The **stats/plotting core** of the ecosystem. It is a library + thin CLI, not a data pipeline:
+The **user-facing analysis layer** of the ecosystem. It is a library + thin CLI, not
+a data pipeline, and it sits *downstream* of the pipelines:
 
-- `wsinsight` (sibling) calls into it for its `hplot` / `hplot-finalize` CLI commands.
-- `sptxinsight` (sibling) **vendors** the engine under `sptxinsight.insightlib` — changes here do NOT propagate automatically; the vendored copy must be re-synced by hand.
+```
+wsinsight / sptxinsight  ->  CSV / h5ad / GeoJSON on disk
+                                     |
+                                     v
+                          hplot  (Jupyter environment)
+                                     |
+                                     v
+                              clawpyter drives it
+```
+
+- Installed in the **JupyterLab environment**, where `clawpyter` drives it to analyse
+  outputs the pipelines have already written.
+- **The pipelines do NOT depend on this package.** `wsinsight` and `sptxinsight` each
+  ship their own `insightlib/` and neither imports `hplot`. That is deliberate — do not
+  "de-duplicate" by making a pipeline import this package; it would invert the layering.
+- Their `hplot` / `hplot-finalize` subcommands are a **name collision only**: those run
+  the pipeline's own `insightlib.insight_helpers.compute_hplot`, which is a separate
+  implementation from the `HPlot` class here.
 
 ## Layout
 
@@ -56,6 +73,8 @@ squidpy: unsigned distance from anchor points + polynomial fit, descriptive only
 
 ## Sibling repos (same ecosystem)
 
-- `wsinsight` — WSI pipeline that calls this package (H-Plot CLI).
-- `sptxinsight` — spatial-transcriptomics sibling with a vendored copy of this engine.
+- `wsinsight` — WSI pipeline. Produces the outputs analysed here; does **not** import
+  this package.
+- `sptxinsight` — spatial-transcriptomics sibling. Same relationship; its `insightlib/`
+  was copied from wsinsight, not from this package.
 - `clawsight` / `clawpyter` — client-side agent plugins for the ecosystem's MCP servers / Jupyter.
