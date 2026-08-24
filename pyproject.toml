@@ -45,6 +45,12 @@ docs = [
   "sphinx-click",
   "sphinx-copybutton",
 ]
+# Test runner for the post-install smoke test in conda-setup.sh. NOT installed
+# by default; brings pytest so `hplot[dev]` / conda-setup can run the suite.
+dev = [
+  "pytest>=7",
+  "pytest-cov",
+]
 
 [project.scripts]
 hplot = "hplot.cli:main"

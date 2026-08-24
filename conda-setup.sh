@@ -133,9 +133,13 @@ fi
 
 # NOTE: this repo uses test/, not tests/.
 if [ -d "${SCRIPT_DIR}/test" ]; then
-    python -m pytest "${SCRIPT_DIR}/test" -q \
-        && echo "  PASS  test suite" \
-        || echo "  WARN  test suite did not pass (non-fatal)"
+    if python -c "import pytest" >/dev/null 2>&1; then
+        python -m pytest "${SCRIPT_DIR}/test" -q \
+            && echo "  PASS  test suite" \
+            || echo "  WARN  test suite did not pass (non-fatal)"
+    else
+        echo "  SKIP  test suite (pytest not installed; pip install -e '.[dev]')"
+    fi
 fi
 
 if [ "${SMOKE_FAIL}" -ne 0 ]; then
