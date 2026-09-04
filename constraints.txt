@@ -24,8 +24,13 @@ matplotlib==3.10.7
 pygam==0.12.0
 
 # --- MCP server (hplot-mcp; optional `mcp` extra) --------------------------
-# Same floor as wsinsight/sptxinsight so one env can serve all of them.
-fastmcp>=4.0,<5
+# Same exact pin as wsinsight/sptxinsight so one env can serve all of them.
+# The >=4.0,<5 compatibility range lives in pyproject.toml.
+fastmcp==4.0.2
+fastmcp-slim==4.0.2
+# hermes-agent pins mcp==2.0.0 exactly; match it so the shared conda env
+# does not thrash between 2.0.0 and 2.1.1. fastmcp 4 accepts mcp>=2.0,<3.
+mcp==2.0.0
 
 # --- anndata (core) / squidpy (optional extra) ------------------------------
 # Held to the same generation as the siblings: zarr 3.x and anndata 0.13+ both
