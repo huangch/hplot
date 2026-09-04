@@ -37,7 +37,7 @@ anndata = []
 squidpy = ["squidpy>=1.2,<1.7"]
 # MCP server (hplot-mcp). NOT installed by default — the core CLI is CSV-based
 # and only needs matplotlib/pandas/scipy/numpy/pygam.
-mcp = ["fastmcp>=3.4.5"]
+mcp = ["fastmcp>=4.0,<5"]
 docs = [
   "sphinx",
   "pydata-sphinx-theme",

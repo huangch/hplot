@@ -540,6 +540,31 @@ def _add_loci_parser(sub):
 
 # ── entry point ───────────────────────────────────────────────────────────
 
+def _add_schema_parser(sub):
+    p = sub.add_parser(
+        "schema",
+        help="Emit a machine-readable JSON schema of every hplot sub-command.",
+    )
+    p.add_argument("--output", dest="output_path", default=None,
+                   help="Write the schema JSON to this file instead of stdout.")
+    p.set_defaults(func=_cmd_schema)
+
+
+def _cmd_schema(args):
+    import json as _json
+
+    from hplot.mcp.schema import COMMANDS
+
+    payload = _json.dumps({"schema_version": 1, "commands": COMMANDS},
+                          indent=2, sort_keys=True, default=str)
+    if getattr(args, "output_path", None):
+        with open(args.output_path, "w", encoding="utf-8") as fh:
+            fh.write(payload + "\n")
+    else:
+        print(payload)
+
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="hplot",
@@ -562,6 +587,7 @@ def main(argv=None):
     _add_gam_parser(sub)
     _add_screen_parser(sub)
     _add_loci_parser(sub)
+    _add_schema_parser(sub)
 
     args = parser.parse_args(argv)
     if args.command is None:
