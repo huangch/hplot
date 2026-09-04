@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import warnings
 from scipy.stats import (t, norm, mannwhitneyu, ttest_ind, chi2, rankdata,
                          kruskal, wilcoxon)
 
@@ -2407,7 +2408,16 @@ def hpathway_arm_contrast(profiles, *, path_names, grid, arm_of,
 
     def _gap(sel1):
         sel0 = np.setdiff1d(np.arange(len(units)), sel1, assume_unique=False)
-        with np.errstate(invalid="ignore"):
+        # `_gap` is called both with non-empty `sel1` (real arm cells) and with
+        # empty `sel1` (e.g. sparse layers gated out by `min_cells`, where the
+        # intended signal is NaN rather than a misleading 0.0). When `sel1`
+        # is empty, `np.nanmean([])` returns NaN but emits a `RuntimeWarning`
+        # that `np.errstate(invalid="ignore")` cannot silence — numpy dispatches
+        # empty-slice warnings through its own channel. Contain the noise
+        # locally so downstream consumers (and the test report) stay clean,
+        # while preserving the NaN-as-signal behaviour for sparse layers.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
             return np.nanmean(D[sel1], axis=0) - np.nanmean(D[sel0], axis=0)
 
     obs = _gap(i1)
@@ -2427,8 +2437,11 @@ def hpathway_arm_contrast(profiles, *, path_names, grid, arm_of,
         max_null[d] = np.nanmax(np.where(np.isfinite(g), g, -np.inf), axis=0)
         if keep_p >= 1.0 or rng.random() < keep_p:
             kept.append(g.astype(np.float32))
-    null_ref = (np.nanpercentile(np.stack(kept), 100.0 * null_quantile, axis=0)
-                if kept else np.full((nG, nP), np.nan))
+    # Layers gated out by `min_cells` are all-NaN by design; NaN is the signal.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        null_ref = (np.nanpercentile(np.stack(kept), 100.0 * null_quantile, axis=0)
+                    if kept else np.full((nG, nP), np.nan))
 
     p = (1.0 + cnt) / (n_draw + 1.0)
     p = np.where(np.isfinite(obs_abs), p, np.nan)

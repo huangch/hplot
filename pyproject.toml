@@ -50,12 +50,22 @@ docs = [
 dev = [
   "pytest>=7",
   "pytest-cov",
+  "ruff",            # pyproject declares [tool.ruff]; keep config + runner in sync
   "pre_commit>=3",
 ]
 
 [project.scripts]
 hplot = "hplot.cli:main"
 hplot-mcp = "hplot.mcp.__main__:main"
+
+[tool.pytest.ini_options]
+# Module-level warnings.filterwarnings() does not survive pytest's per-test
+# filter reset, so third-party noise has to be registered here.
+filterwarnings = [
+    # anndata coerces non-str obs indices on construction; the tests exercise
+    # that path deliberately.
+    "ignore:Transforming to str index:UserWarning",
+]
 
 [project.urls]
 Repository = "https://github.com/huangch/hplot"

@@ -63,7 +63,7 @@ squidpy: unsigned distance from anchor points + polynomial fit, descriptive only
 
 ## Environment
 
-- Standalone env: `sh ./conda-setup.sh -n hplot [-r|--reset] [-m|--mcp]` — creates a py3.11 env with the core deps (matplotlib/pandas/scipy/numpy/pygam/anndata). No GPU/CUDA stack needed (pure CPU plotting + stats). The `-m`/`--mcp` flag adds `fastmcp` (the `hplot-mcp` server); **not installed by default** (matching the wsinsight/sptxinsight convention).
+- Standalone env: `sh ./conda-setup.sh hplot [-r|--reset] [-m|--mcp] [-d|--dev]` — creates a py3.11 env with the core deps (matplotlib/pandas/scipy/numpy/pygam/anndata). No GPU/CUDA stack needed (pure CPU plotting + stats). The `-m`/`--mcp` flag adds `fastmcp` (the `hplot-mcp` server); **not installed by default** (matching the wsinsight/sptxinsight convention). Add `-d`/`--dev` to also install pytest/pytest-cov/ruff/pre_commit for running the test suite; add `-r`/`--reset` to nuke and recreate the env. Run `./conda-setup.sh --help` for the full CLI.
 - Docker: `./docker-build-push.sh` builds `hplot:latest` and pushes `huangchtw/hplot:latest`. The image ships a `user` (uid 1000) and an entrypoint that remaps it to the mount owner at run time (same pattern as wsinsight). `fastmcp` is baked in, so `hplot-mcp` works in the image without an extra install.
 
 ## Conventions
