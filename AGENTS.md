@@ -67,6 +67,16 @@ squidpy: unsigned distance from anchor points + polynomial fit, descriptive only
 - Standalone env: `sh ./conda-setup.sh hplot [-r|--reset] [-m|--mcp] [-d|--dev]` — creates a py3.11 env with the core deps (matplotlib/pandas/scipy/numpy/pygam/anndata). No GPU/CUDA stack needed (pure CPU plotting + stats). The `-m`/`--mcp` flag adds `fastmcp` (the `hplot-mcp` server); **not installed by default** (matching the wsinsight/sptxinsight convention). Add `-d`/`--dev` to also install pytest/pytest-cov/ruff/pre_commit for running the test suite; add `-r`/`--reset` to nuke and recreate the env. Run `./conda-setup.sh --help` for the full CLI.
 - Docker: `./docker-build-push.sh` builds `hplot:latest` and pushes `huangchtw/hplot:latest`. The image ships a `user` (uid 1000) and an entrypoint that remaps it to the mount owner at run time (same pattern as wsinsight). `fastmcp` is baked in, so `hplot-mcp` works in the image without an extra install.
 
+## Running hplot (the unified wrapper)
+
+- `./hplot.sh` is the **single entry point** for running `hplot`. It manages BOTH runners — `native` (the hplot CLI on the host inside the activated conda env) and `docker` (the `huangchtw/hplot:latest` container). The legacy `hplot-docker-run.sh` wrapper has moved to `bak_old_scripts/`.
+- Subcommands: `./hplot.sh run [--runner native|docker] [--tmpdir DIR] [--no-pull] [--dry-run] [HPLOT_ARGS ...]`, `./hplot.sh status`, `./hplot.sh doctor`, `./hplot.sh where`. Run `./hplot.sh --help` for the full surface.
+- **Why `--runner`, not `-b`:** hplot's CLI happens to have no global `--backend` flag, so `-b` would have worked, but we standardize on `--runner` across wrappers for cross-tool consistency. (If hplot ever gains a conflicting global flag, this avoids surprise.)
+- **Param-parsing rule**: everything before the first hplot subcommand name (`plot`, `test`, `gam`, `screen`, `loci`, `schema`) is consumed by the wrapper. From (and including) the first hplot subcommand name onward, every token is passed through verbatim. Use `--` to force passthrough explicitly.
+- **Default runner**: `native`. Override with `--runner docker`, or set `HPLOT_RUNNER=docker` in the environment.
+- **Discovery of hplot subcommands** (for param parsing): cached at `$HOME/.cache/hplot/commands.txt` (TTL `HPLOT_COMMANDS_TTL_SECONDS`, default 86400) via `hplot schema --commands-only` (added 2026-09-05 during the click migration). Falls back to a static builtin list if hplot isn't on PATH.
+- The `hplot` CLI is built on [click](https://palletsprojects.com/p/click/) (as of 2026-09-05; was argparse before that). Migration rationale and surface notes live in the wrapper header comment.
+
 ## Conventions
 
 - Deps are minimal on purpose: matplotlib/pandas/scipy/numpy/pygam plus `anndata` (core, because `__init__` exports the `pp`/`tl`/`pl` API unconditionally). `anndata` is still imported **lazily inside functions** — `test/test_anndata_api.py` asserts no module-level import, so `import hplot.core` stays cheap. `squidpy` is not imported anywhere in the package; it is a convenience extra only.

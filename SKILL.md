@@ -91,6 +91,82 @@ stack is needed; hplot is pure CPU.
 
 ---
 
+## 1.5 Running hplot
+
+**Do not** invoke `hplot` directly, and **do not** construct a `docker run ...` line by hand. Use the unified `./hplot.sh` wrapper in this repo, which manages BOTH runners (native conda env OR docker container):
+
+```
+./hplot.sh run  [--runner {native,docker}]  [--tmpdir DIR]  [--no-pull]  [--dry-run]   [HPLOT_ARGS ...]
+./hplot.sh status
+./hplot.sh doctor
+./hplot.sh where
+./hplot.sh --help
+```
+
+### Why use the wrapper
+
+- **Single entry point for both runners.** Native (`--runner native`, default) runs `hplot` from the activated conda env. Docker (`--runner docker`) wraps the same CLI in the `huangchtw/hplot:latest` container, mounts a data dir as `/workspace`, honors `--tmpdir` for cases where the container's `/tmp` is too small for big figure output, and remaps uid/gid via `docker-entrypoint.sh`.
+- **Simpler env surface than the wsinsight wrapper.** hplot is pure-CPU (no `--gpu` flag), has no HF model cache (no persistent volume), and writes figures to the data dir directly. The only docker-only knobs are `--tmpdir` and `--no-pull`.
+- **Why `--runner`, not `-b`:** hplot's CLI happens to have no global `--backend` flag, so `-b` would have worked, but we standardize on `--runner` across wrappers for cross-tool consistency. If hplot ever gains a conflicting global flag, this avoids surprise.
+- **Argv-parsing rule**: everything before the first hplot subcommand name (`plot`, `test`, `gam`, `screen`, `loci`, `schema`) is consumed by the wrapper. From (and including) the first hplot subcommand name onward, every token is passed through verbatim. Use `--` to force passthrough explicitly.
+- **Always use `--` if uncertain.** Both forms work; the explicit delimiter removes any doubt:
+  - `./hplot.sh plot -i data.csv --target x --group y -o out/` ✓
+  - `./hplot.sh plot -i data.csv -- --help` ✓ (forces hplot's own --help to print, not the wrapper's)
+
+### Defaults
+
+| Aspect | Default | Override |
+|---|---|---|
+| Runner | `native` | `--runner docker` or `HPLOT_RUNNER=docker` |
+| Docker image | `huangchtw/hplot:latest` | `HPLOT_IMAGE=...` |
+| Data dir (docker) | unset → wrapper errors | `HPLOT_DATA_DIR=/path` (must exist) |
+| `docker pull` (docker) | best-effort at run | `--no-pull` flag |
+| Unknown `-X` flag | warn + passthrough to hplot | `HPLOT_STRICT=1` |
+
+### Recipe — single run
+
+1. **Discover the wrapper's absolute path** (so the agent doesn't rely on a hardcoded location):
+
+   ```bash
+   HPLOT=$(find /workspace -name hplot.sh -not -path '*/bak_old_scripts/*' 2>/dev/null | head -1)
+   ls -l "$HPLOT"
+   ```
+
+2. **Pick a runner**:
+   - If `docker info` works AND you want containerized/reproducible runs → `--runner docker`
+   - If the conda env `hplot` is activated → `--runner native` (default)
+
+3. **Run a hplot subcommand** (replace `plot` with `test`, `gam`, `screen`, `loci`, etc.):
+
+   ```bash
+   ./hplot.sh plot -i data.csv --target immune_fraction --group hpv_status -o out/
+   # Or docker equivalent:
+   export HPLOT_DATA_DIR=/path/with/data
+   ./hplot.sh --runner docker plot -i /workspace/data.csv -o /workspace/out/
+   ```
+
+4. **Dry-run first** when the data dir is uncertain:
+
+   ```bash
+   HPLOT_DATA_DIR=/tmp/pretend \
+   ./hplot.sh --runner docker --tmpdir /scratch --dry-run screen -i raw.csv -o ranking.csv
+   # prints the exact docker run command without executing it
+   ```
+
+### Recipe — diagnose
+
+- **`./hplot.sh where`** → absolute path to the wrapper.
+- **`./hplot.sh status`** → effective configuration: runner, tmpdir, image, hplot version, pass-through args.
+- **`./hplot.sh doctor`** → preflight. For native: `hplot --help` runs. For docker: daemon reachable, image present locally.
+
+### Decision tree
+
+1. Is `docker info` succeeding? → default to `--runner docker` for reproducible runs.
+2. Else is `hplot --version` succeeding in the activated conda env? → use native (default).
+3. Else run `./hplot.sh doctor` against `native` then `docker` and decide from the printed diagnostics whether to install: `sh ./conda-setup.sh hplot`.
+
+---
+
 ## 3. Input Data Format
 
 hplot expects a **tidy CSV** (or a pandas DataFrame) where each row is one case
@@ -337,12 +413,14 @@ the same defaults. Without `--screen` those options are ignored.
 
 ```bash
 hplot schema                    # JSON to stdout
-hplot schema --output cli.json  # JSON to a file
+hplot schema --output cli.json   # JSON to a file
+hplot schema --commands-only      # just the subcommand names as a JSON list
 ```
 
 | Option | Type | Default | Description |
 | ------ | ---- | ------- | ----------- |
 | `--output` | path | stdout | Write the schema JSON here instead of stdout. |
+| `--commands-only` | flag | off | Emit only the names of registered subcommands as a flat JSON list `{"commands": [...]}`. Used by the `hplot.sh` wrapper for cheap subcommand-boundary discovery; the schema subcommand itself is excluded (it's a meta-command). |
 
 Emits `{"schema_version": 1, "commands": {...}}`. This is the same table the
 MCP server registers from, so the CLI and MCP surfaces cannot drift. Prefer
