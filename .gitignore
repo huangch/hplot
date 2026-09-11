@@ -50,3 +50,6 @@ anndata_quickstart.h5ad
 
 # Sphinx build output
 docs/_build/
+
+# Pfizer-internal registry push script; must never reach public GitHub.
+docker-build-push-pfizer.sh
